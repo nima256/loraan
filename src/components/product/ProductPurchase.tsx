@@ -46,8 +46,13 @@ export function ProductPurchase({ product }: { product: ProductSummary }) {
     const node = buyRowRef.current;
     if (!node || typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(
-      ([entry]) => setShowStickyBar(!entry.isIntersecting),
-      { rootMargin: "-96px 0px 0px 0px" }
+      ([entry]) => {
+        // Only once the buy row has scrolled *above* the viewport. Before the
+        // user reaches it, it is also "not intersecting" — showing the bar then
+        // would just cover the product they are still looking at.
+        setShowStickyBar(!entry.isIntersecting && entry.boundingClientRect.top < 0);
+      },
+      { threshold: 0 }
     );
     observer.observe(node);
     return () => observer.disconnect();
