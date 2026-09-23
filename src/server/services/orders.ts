@@ -259,6 +259,51 @@ export interface FinalizeResult {
  * `orderSmsSentAt`, because a network call has no place inside a transaction.
  */
 export async function finalizePaidOrder(input: FinalizeInput): Promise<FinalizeResult> {
+  // Serializable transactions legitimately abort when two of them touch the
+  // same rows at once (Postgres 40001). That is the database doing its job, not
+  // a failure to report — so the work is simply retried. Only once the retries
+  // are spent does the caller see an error, and it is the honest one
+  // ("out of stock") rather than a driver message.
+  return withSerializationRetry(() => finalizePaidOrderOnce(input));
+}
+
+/** Retries a transaction through serialization failures and deadlocks. */
+async function withSerializationRetry<T>(run: () => Promise<T>, attempts = 4): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await run();
+    } catch (error) {
+      if (!isRetryableTransactionError(error)) throw error;
+      lastError = error;
+      // A little jitter so two racing callbacks don't retry in lockstep.
+      const backoff = 25 * 2 ** attempt + Math.floor(Math.random() * 25);
+      await new Promise((resolve) => setTimeout(resolve, backoff));
+    }
+  }
+  logger.warn("تراکنش پس از چند تلاش هم موفق نشد", { cause: lastError });
+  throw outOfStock(
+    "به دلیل خرید همزمان، موجودی این کالا تمام شد. لطفاً سبد خرید خود را بازبینی کنید."
+  );
+}
+
+/** Postgres 40001 (serialization failure) and 40P01 (deadlock) are retryable. */
+function isRetryableTransactionError(error: unknown): boolean {
+  const code =
+    error instanceof Prisma.PrismaClientKnownRequestError
+      ? String((error.meta as { code?: string } | undefined)?.code ?? error.code)
+      : "";
+  const message = error instanceof Error ? error.message : "";
+  return (
+    code === "40001" ||
+    code === "40P01" ||
+    message.includes("40001") ||
+    message.includes("40P01") ||
+    message.includes("could not serialize access")
+  );
+}
+
+async function finalizePaidOrderOnce(input: FinalizeInput): Promise<FinalizeResult> {
   return prisma.$transaction(
     async (tx) => {
       const order = await tx.order.findUnique({

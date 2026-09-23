@@ -5,6 +5,7 @@ import { effectivePricing } from "./pricing";
 import { loadCampaignPricing } from "./catalog";
 import { validateCoupon } from "./coupons";
 import { resolveShipping, type ResolvedShipping } from "./shipping";
+import { toPersianDigits } from "@/lib/format";
 import type { OrderTotals } from "@/types";
 
 /**
@@ -131,7 +132,8 @@ export async function validateCart(options: ValidateCartOptions): Promise<Valida
       continue;
     }
 
-    const label = `${variant.product.name} (${variant.productColor.color.name}، سایز ${variant.size.value})`;
+    // Persian digits throughout: these strings are shown to the customer.
+    const label = `${variant.product.name} (${variant.productColor.color.name}، سایز ${toPersianDigits(variant.size.value)})`;
 
     if (variant.stock <= 0) {
       removed.push({ variantId: variant.id, name: variant.product.name, reason: "out_of_stock" });
@@ -149,7 +151,7 @@ export async function validateCart(options: ValidateCartOptions): Promise<Valida
       issues.push({
         variantId: variant.id,
         code: "reduced_quantity",
-        message: `از «${label}» فقط ${quantity} عدد موجود است؛ تعداد سبد اصلاح شد.`,
+        message: `از «${label}» فقط ${toPersianDigits(quantity)} عدد موجود است؛ تعداد سبد اصلاح شد.`,
       });
     }
 
