@@ -20,9 +20,9 @@ import { AddressForm } from "@/components/account/AddressForm";
 import { useCart } from "@/store/CartProvider";
 import { useAuth } from "@/store/AuthProvider";
 import { useToast } from "@/components/ui/Toast";
-import { shippingMethods } from "@/data/commerce";
+import { api } from "@/lib/api/client";
+import { useAction } from "@/lib/use-action";
 import { formatPhone, toPersianDigits } from "@/lib/format";
-import type { PaymentMethod } from "@/types";
 
 const STEPS = ["آدرس تحویل", "ارسال و پرداخت", "بررسی نهایی"];
 
@@ -32,21 +32,29 @@ const STEPS = ["آدرس تحویل", "ارسال و پرداخت", "بررسی 
  * Three logical steps on one route — the URL never changes, so the browser back
  * button leaves checkout rather than stranding the user mid-flow, and the order
  * summary stays visible the whole time.
+ *
+ * Nothing about money is decided here. The totals shown come from the server's
+ * cart validation, and placing the order sends only variant ids, quantities and
+ * the chosen address — the server reloads every price and recomputes the
+ * amount before it creates anything.
  */
 export default function CheckoutPage() {
   const router = useRouter();
   const { toast } = useToast();
-  const { items, totals, coupon, shippingMethodId, setShippingMethodId, hydrating, clear } = useCart();
+  const {
+    items, totals, coupon, shippingMethodId, setShippingMethodId, shippingMethods,
+    hydrating, validating, issues, revalidate, clear,
+  } = useCart();
   const { isAuthenticated, hydrating: authLoading, user, addresses, addAddress } = useAuth();
 
   const [step, setStep] = useState(0);
   const [addressId, setAddressId] = useState<string | null>(null);
   const [addressModalOpen, setAddressModalOpen] = useState(false);
-  const [payment, setPayment] = useState<PaymentMethod>("online");
+  // ZarinPal is the only live gateway; the field exists for the order record.
+  const [payment, setPayment] = useState("online");
   const [smsUpdates, setSmsUpdates] = useState(true);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [termsError, setTermsError] = useState(false);
-  const [placing, setPlacing] = useState(false);
 
   // Purchasing requires an account — this is a business rule, not a convenience.
   useEffect(() => {
@@ -59,8 +67,56 @@ export default function CheckoutPage() {
     }
   }, [addresses, addressId]);
 
+  /**
+   * Places the order.
+   *
+   * Sends identifiers and quantities only. The server reprices everything from
+   * the database, generates the order number, creates a pending order and
+   * hands back the gateway URL — the browser never invents an order number and
+   * never states an amount.
+   *
+   * `useAction` holds an in-flight guard in a ref, so an impatient double-click
+   * cannot produce two orders.
+   */
+  const place = useAction(
+    async () => {
+      // One last repricing, so a stale tab is caught before the payment starts
+      // rather than after.
+      const fresh = await revalidate();
+      if (fresh && (fresh.issues.some((i) => i.code !== "price_changed") || fresh.removed.length)) {
+        throw new Error("سبد خرید شما تغییر کرده است. لطفاً قبل از پرداخت آن را بازبینی کنید.");
+      }
+
+      return api.post<{ orderNumber: string; paymentUrl?: string; redirectUrl: string }>(
+        "/api/v1/checkout",
+        {
+          items: items.map((i) => ({ variantId: i.variantId, quantity: i.quantity })),
+          addressId,
+          shippingMethodCode: shippingMethodId,
+          couponCode: coupon?.code,
+          note: undefined,
+          paymentMethod: "online",
+        }
+      );
+    },
+    {
+      onSuccess: (result) => {
+        clear();
+        if (result.paymentUrl) {
+          // A full navigation, not a router push: the gateway is off-origin.
+          window.location.href = result.paymentUrl;
+          return;
+        }
+        router.push(result.redirectUrl);
+      },
+      onError: (message) =>
+        toast({ tone: "error", title: "ثبت سفارش انجام نشد", description: message }),
+    }
+  );
+
   const address = useMemo(() => addresses.find((a) => a.id === addressId), [addresses, addressId]);
   const method = shippingMethods.find((m) => m.id === shippingMethodId) ?? shippingMethods[0];
+  const blockingIssues = issues.filter((i) => i.code !== "price_changed");
 
   if (authLoading || hydrating) {
     return (
@@ -103,19 +159,18 @@ export default function CheckoutPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const placeOrder = async () => {
+  const placeOrder = () => {
     if (!termsAccepted) {
       setTermsError(true);
       document.getElementById("terms")?.focus();
       return;
     }
-    setPlacing(true);
-    await new Promise((r) => setTimeout(r, 1200));
-    // No payment gateway exists yet — this is where the redirect to the PSP goes.
-    const orderNumber = `LRN-${new Intl.DateTimeFormat("fa-IR-u-nu-latn", { year: "2-digit", month: "2-digit", day: "2-digit" })
-      .format(new Date()).replace(/\//g, "")}-${Math.floor(1000 + Math.random() * 9000)}`;
-    clear();
-    router.push(`/payment/success?order=${orderNumber}`);
+    if (!addressId) {
+      toast({ tone: "error", title: "آدرس تحویل را انتخاب کنید" });
+      setStep(0);
+      return;
+    }
+    void place.run();
   };
 
   return (
@@ -199,7 +254,7 @@ export default function CheckoutPage() {
                       name="shipping"
                       value={m.id}
                       checked={m.id === shippingMethodId}
-                      disabled={!m.available}
+                      disabled={!m.available || place.pending}
                       onChange={(value) => setShippingMethodId(value as typeof shippingMethodId)}
                       badge={
                         !m.available ? <Badge tone="neutral" size="sm">به‌زودی</Badge>
@@ -236,7 +291,7 @@ export default function CheckoutPage() {
                     name="payment"
                     value="online"
                     checked={payment === "online"}
-                    onChange={(v) => setPayment(v as PaymentMethod)}
+                    onChange={(v) => setPayment(v)}
                     title="پرداخت اینترنتی"
                     description="انتقال به درگاه بانکی و پرداخت با کارت‌های عضو شتاب."
                   />
@@ -352,6 +407,33 @@ export default function CheckoutPage() {
             </>
           )}
 
+          {/* Anything the server changed under the customer — a price move or a
+              size that sold out — is said here rather than silently applied. */}
+          {issues.length > 0 && (
+            <Alert
+              tone={blockingIssues.length ? "warning" : "info"}
+              role="status"
+              title={blockingIssues.length ? "سبد خرید شما تغییر کرده است" : "توجه"}
+            >
+              <ul className="space-y-1">
+                {issues.map((issue, index) => (
+                  <li key={`${issue.variantId}-${index}`}>{issue.message}</li>
+                ))}
+              </ul>
+              {blockingIssues.length > 0 && (
+                <Link
+                  href="/cart"
+                  className="mt-2 inline-flex min-h-9 items-center gap-1 font-medium text-primary hover:underline dark:text-[color:var(--primary-soft-fg)]"
+                >
+                  بازبینی سبد خرید
+                  <ArrowLeft className="size-3.5" aria-hidden />
+                </Link>
+              )}
+            </Alert>
+          )}
+
+          {place.error && <Alert tone="danger" role="alert">{place.error}</Alert>}
+
           {/* Step navigation */}
           <div className="flex flex-wrap items-center justify-between gap-3">
             {step > 0 ? (
@@ -365,8 +447,14 @@ export default function CheckoutPage() {
                 ادامه
               </Button>
             ) : (
-              <Button size="lg" onClick={placeOrder} loading={placing} icon={<Lock className="size-4" aria-hidden />}>
-                پرداخت و ثبت نهایی سفارش
+              <Button
+                size="lg"
+                onClick={placeOrder}
+                loading={place.pending}
+                disabled={place.pending || validating || blockingIssues.length > 0}
+                icon={<Lock className="size-4" aria-hidden />}
+              >
+                {place.pending ? "در حال انتقال به درگاه…" : "پرداخت و ثبت نهایی سفارش"}
               </Button>
             )}
           </div>

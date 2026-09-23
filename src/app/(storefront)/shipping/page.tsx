@@ -5,7 +5,7 @@ import { ContentList, ContentPage, ContentSection } from "@/components/ui/Prose"
 import { Card } from "@/components/ui/Card";
 import { Alert } from "@/components/ui/Feedback";
 import { Badge } from "@/components/ui/Badge";
-import { shippingMethods } from "@/data/commerce";
+import { listShippingMethods } from "@/server/services/shipping";
 import { siteConfig } from "@/lib/site-config";
 import { formatAmount, toPersianDigits } from "@/lib/format";
 
@@ -14,7 +14,12 @@ export const metadata: Metadata = {
   description: "اطلاعات ارسال سفارش‌های لوران با تیپاکس، زمان تحویل و هزینه کرایه.",
 };
 
-export default function ShippingPage() {
+/** Rendered on demand so a change in the admin panel shows immediately. */
+export const dynamic = "force-dynamic";
+
+export default async function ShippingPage() {
+  const shippingMethods = await listShippingMethods();
+
   return (
     <ContentPage
       title="ارسال و تحویل سفارش"

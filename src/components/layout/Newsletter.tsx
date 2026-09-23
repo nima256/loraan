@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Check, Mail } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { isValidEmail } from "@/lib/format";
+import { api } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
 
 type State = "idle" | "loading" | "success" | "error" | "duplicate";
@@ -25,9 +26,17 @@ export function NewsletterForm({ className, variant = "footer" }: { className?: 
       return;
     }
     setState("loading");
-    await new Promise((r) => setTimeout(r, 800));
-    // Mock rule: this address is treated as already subscribed.
-    setState(email.trim().toLowerCase() === "test@loranworld.com" ? "duplicate" : "success");
+    try {
+      const result = await api.post<{ created: boolean; resubscribed: boolean }>(
+        "/api/v1/newsletter",
+        { email: email.trim(), source: "footer" }
+      );
+      // An address that was already on the list is a success, not an error —
+      // the only thing that changes is what the visitor is told.
+      setState(result.created || result.resubscribed ? "success" : "duplicate");
+    } catch {
+      setState("error");
+    }
   };
 
   if (state === "success") {

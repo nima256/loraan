@@ -4,7 +4,9 @@ import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Input";
 import { Checkbox } from "@/components/ui/Checkbox";
-import { provinces } from "@/data/commerce";
+import { Alert } from "@/components/ui/Feedback";
+import { errorMessage } from "@/lib/api/client";
+import { provinces } from "@/data/provinces";
 import { isValidPhone, isValidPostalCode, toLatinDigits } from "@/lib/format";
 import type { Address } from "@/types";
 
@@ -18,7 +20,7 @@ export function AddressForm({
   initial, onSubmit, onCancel, submitLabel = "ثبت آدرس",
 }: {
   initial?: Partial<Address>;
-  onSubmit: (address: Omit<Address, "id">) => void;
+  onSubmit: (address: Omit<Address, "id">) => void | Promise<unknown>;
   onCancel?: () => void;
   submitLabel?: string;
 }) {
@@ -37,6 +39,7 @@ export function AddressForm({
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const set = (key: keyof typeof values, value: string | boolean) => {
     setValues((v) => ({ ...v, [key]: value }));
@@ -65,17 +68,23 @@ export function AddressForm({
     }
 
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 400));
-    setLoading(false);
-    onSubmit({
-      ...values,
-      phone: toLatinDigits(values.phone).replace(/\s/g, ""),
-      postalCode: toLatinDigits(values.postalCode).replace(/[\s-]/g, ""),
-    });
+    try {
+      // `onSubmit` reaches the API, so the pending state must cover the real
+      // round-trip rather than a fixed delay.
+      await onSubmit({
+        ...values,
+        phone: toLatinDigits(values.phone).replace(/\s/g, ""),
+        postalCode: toLatinDigits(values.postalCode).replace(/[\s-]/g, ""),
+      });
+    } catch (error) {
+      setSubmitError(errorMessage(error));
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <form onSubmit={submit} noValidate className="space-y-4">
+    <form onSubmit={submit} noValidate className="space-y-4" aria-busy={loading}>
       <Input
         id="addr-title"
         label="عنوان آدرس"
@@ -193,8 +202,15 @@ export function AddressForm({
       />
 
       <div className="flex flex-wrap gap-2 pt-2">
-        <Button type="submit" loading={loading}>{submitLabel}</Button>
-        {onCancel && <Button type="button" variant="ghost" onClick={onCancel}>انصراف</Button>}
+
+      {submitError && <Alert tone="danger" role="alert">{submitError}</Alert>}
+
+        <Button type="submit" loading={loading} disabled={loading}>{submitLabel}</Button>
+        {onCancel && (
+          <Button type="button" variant="ghost" onClick={onCancel} disabled={loading}>
+            انصراف
+          </Button>
+        )}
       </div>
     </form>
   );

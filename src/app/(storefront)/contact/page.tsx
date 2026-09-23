@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/Button";
 import { Input, Select, Textarea } from "@/components/ui/Input";
 import { Alert } from "@/components/ui/Feedback";
 import { useToast } from "@/components/ui/Toast";
+import { api } from "@/lib/api/client";
+import { useAction } from "@/lib/use-action";
 import { siteConfig } from "@/lib/site-config";
 import { isValidPhone } from "@/lib/format";
 
@@ -22,8 +24,31 @@ const SUBJECTS = [
 export default function ContactPage() {
   const { toast } = useToast();
   const [values, setValues] = useState({ name: "", phone: "", subject: "order", message: "" });
+
+  /**
+   * Persists the message.
+   *
+   * The subject is sent as its human label rather than its key, so the
+   * administrator's queue reads as a sentence instead of a slug.
+   */
+  const send = useAction(
+    async () =>
+      api.post<{ number: string; message: string }>("/api/v1/contact", {
+        fullName: values.name.trim(),
+        phone: values.phone.trim(),
+        subject: SUBJECTS.find((s) => s.value === values.subject)?.label ?? values.subject,
+        message: values.message.trim(),
+      }),
+    {
+      onSuccess: (result) => {
+        setSent(true);
+        toast({ tone: "success", title: "پیام شما ارسال شد", description: result.message });
+      },
+      onError: (message) =>
+        toast({ tone: "error", title: "ارسال پیام انجام نشد", description: message }),
+    }
+  );
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
 
   const set = (key: keyof typeof values, value: string) => {
@@ -42,11 +67,7 @@ export default function ContactPage() {
       document.getElementById(`contact-${Object.keys(next)[0]}`)?.focus();
       return;
     }
-    setLoading(true);
-    await new Promise((r) => setTimeout(r, 800));
-    setLoading(false);
-    setSent(true);
-    toast({ tone: "success", title: "پیام شما ارسال شد", description: "طی یک روز کاری پاسخ می‌دهیم." });
+    void send.run();
   };
 
   const whatsappNumber = siteConfig.contact.whatsapp.replace(/[^\d]/g, "");
@@ -179,7 +200,12 @@ export default function ContactPage() {
                 error={errors.message}
                 placeholder="سؤال یا درخواستتان را بنویسید…"
               />
-              <Button type="submit" loading={loading} icon={<Send className="size-4" aria-hidden />}>
+              <Button
+                type="submit"
+                loading={send.pending}
+                disabled={send.pending}
+                icon={<Send className="size-4" aria-hidden />}
+              >
                 ارسال پیام
               </Button>
             </form>

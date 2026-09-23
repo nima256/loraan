@@ -13,7 +13,7 @@ import { PriceInline } from "@/components/ui/Price";
 import { useToast } from "@/components/ui/Toast";
 import { api, query as buildQuery } from "@/lib/api/client";
 import { useAction } from "@/lib/use-action";
-import { provinces } from "@/data/commerce";
+import { provinces } from "@/data/provinces";
 import { formatAmount, toPersianDigits } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { ShippingMethod } from "@/types";

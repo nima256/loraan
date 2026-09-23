@@ -10,6 +10,8 @@ import { Stars, StarPicker } from "@/components/ui/Rating";
 import { Input, Textarea } from "@/components/ui/Input";
 import { useToast } from "@/components/ui/Toast";
 import { useAuth } from "@/store/AuthProvider";
+import { api } from "@/lib/api/client";
+import { useAction } from "@/lib/use-action";
 import { formatRelative, toPersianDigits } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { RatingBreakdown, Review } from "@/types";
@@ -31,13 +33,14 @@ export function Reviews({
   breakdown: RatingBreakdown;
   fallbackRating: number;
 }) {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated } = useAuth();
   const { toast } = useToast();
   const [formOpen, setFormOpen] = useState(false);
   const [sort, setSort] = useState<"newest" | "helpful" | "highest" | "lowest">("newest");
-  const [submitted, setSubmitted] = useState<Review[]>([]);
 
-  const all = useMemo(() => [...submitted, ...reviews], [submitted, reviews]);
+  // Only published reviews are listed. A review the customer just submitted is
+  // pending moderation and lives in their account area, not here.
+  const all = reviews;
   const sorted = useMemo(() => {
     const copy = [...all];
     if (sort === "helpful") return copy.sort((a, b) => b.helpfulCount - a.helpfulCount);
@@ -49,8 +52,13 @@ export function Reviews({
   const average = breakdown.total > 0 ? breakdown.average : fallbackRating;
   const sizeTotal = breakdown.sizeFeedback.small + breakdown.sizeFeedback.true + breakdown.sizeFeedback.large;
 
-  const onSubmitted = (review: Review) => {
-    setSubmitted((list) => [review, ...list]);
+  /**
+   * A submitted review is `pending` until an administrator approves it, so it
+   * is deliberately NOT spliced into the public list — showing the customer
+   * their own review among the published ones would misrepresent what everyone
+   * else can see. The confirmation says where it went instead.
+   */
+  const onSubmitted = () => {
     setFormOpen(false);
     toast({
       tone: "success",
@@ -198,7 +206,6 @@ export function Reviews({
         onClose={() => setFormOpen(false)}
         productId={productId}
         productName={productName}
-        authorName={user ? `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || "کاربر لوران" : ""}
         isAuthenticated={isAuthenticated}
         onSubmitted={onSubmitted}
       />
@@ -207,22 +214,49 @@ export function Reviews({
 }
 
 function ReviewFormModal({
-  open, onClose, productId, productName, authorName, isAuthenticated, onSubmitted,
+  open, onClose, productId, productName, isAuthenticated, onSubmitted,
 }: {
   open: boolean;
   onClose: () => void;
   productId: string;
   productName: string;
-  authorName: string;
   isAuthenticated: boolean;
-  onSubmitted: (review: Review) => void;
+  onSubmitted: () => void;
 }) {
   const [rating, setRating] = useState(0);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [sizeFeedback, setSizeFeedback] = useState<"small" | "true" | "large">("true");
   const [errors, setErrors] = useState<{ rating?: string; body?: string }>({});
-  const [loading, setLoading] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  /**
+   * Submits for moderation.
+   *
+   * `verifiedPurchase` is decided by the server from the order history — it is
+   * not something the form can claim.
+   */
+  const send = useAction(
+    async () =>
+      api.post("/api/v1/reviews", {
+        productId,
+        rating,
+        title: title.trim() || undefined,
+        body: body.trim(),
+        sizeFeedback,
+      }),
+    {
+      onSuccess: () => {
+        setRating(0);
+        setTitle("");
+        setBody("");
+        setSizeFeedback("true");
+        setSubmitError(null);
+        onSubmitted();
+      },
+      onError: (message) => setSubmitError(message),
+    }
+  );
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -232,22 +266,7 @@ function ReviewFormModal({
     setErrors(next);
     if (Object.keys(next).length) return;
 
-    setLoading(true);
-    await new Promise((r) => setTimeout(r, 700));
-    setLoading(false);
-    onSubmitted({
-      id: `rev-local-${Date.now()}`,
-      productId,
-      authorName: authorName || "کاربر لوران",
-      rating,
-      title: title.trim() || undefined,
-      body: body.trim(),
-      createdAt: new Date().toISOString(),
-      verifiedPurchase: true,
-      helpfulCount: 0,
-      sizeFeedback,
-    });
-    setRating(0); setTitle(""); setBody(""); setSizeFeedback("true");
+    void send.run();
   };
 
   return (
@@ -260,8 +279,10 @@ function ReviewFormModal({
       footer={
         isAuthenticated ? (
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={onClose}>انصراف</Button>
-            <Button type="submit" form="review-form" loading={loading}>ثبت دیدگاه</Button>
+            <Button variant="ghost" onClick={onClose} disabled={send.pending}>انصراف</Button>
+            <Button type="submit" form="review-form" loading={send.pending} disabled={send.pending}>
+              ثبت دیدگاه
+            </Button>
           </div>
         ) : null
       }
@@ -276,7 +297,8 @@ function ReviewFormModal({
           </div>
         </Alert>
       ) : (
-        <form id="review-form" onSubmit={submit} noValidate className="space-y-5">
+        <form id="review-form" onSubmit={submit} noValidate className="space-y-5" aria-busy={send.pending}>
+          {submitError && <Alert tone="danger" role="alert">{submitError}</Alert>}
           <div>
             <span id="rating-label" className="mb-2 block text-sm font-medium text-fg">
               امتیاز شما <span className="text-primary" aria-hidden>*</span>

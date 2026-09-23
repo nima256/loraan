@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Alert } from "@/components/ui/Feedback";
 import { useToast } from "@/components/ui/Toast";
+import { useAction } from "@/lib/use-action";
 import { useAuth } from "@/store/AuthProvider";
 import { formatDate, formatPhone, isValidEmail } from "@/lib/format";
 
@@ -22,7 +23,13 @@ export default function ProfilePage() {
     birthDate: user?.birthDate ?? "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(false);
+
+  /** Persists the profile through the account API. */
+  const save = useAction(async () => updateUser(values), {
+    onSuccess: () => toast({ tone: "success", title: "اطلاعات حساب ذخیره شد" }),
+    onError: (message) =>
+      toast({ tone: "error", title: "ذخیره انجام نشد", description: message }),
+  });
 
   const set = (key: keyof typeof values, value: string) => {
     setValues((v) => ({ ...v, [key]: value }));
@@ -39,11 +46,7 @@ export default function ProfilePage() {
     setErrors(next);
     if (Object.keys(next).length) return;
 
-    setLoading(true);
-    await new Promise((r) => setTimeout(r, 500));
-    updateUser(values);
-    setLoading(false);
-    toast({ tone: "success", title: "اطلاعات حساب ذخیره شد" });
+    void save.run();
   };
 
   return (
@@ -54,7 +57,7 @@ export default function ProfilePage() {
       </header>
 
       <Card>
-        <form onSubmit={submit} noValidate className="space-y-4">
+        <form onSubmit={submit} noValidate className="space-y-4" aria-busy={save.pending}>
           <div className="grid gap-4 sm:grid-cols-2">
             <Input label="نام" required autoComplete="given-name" value={values.firstName}
               onChange={(e) => set("firstName", e.target.value)} error={errors.firstName} />
@@ -107,7 +110,7 @@ export default function ProfilePage() {
           </div>
 
           <div className="flex justify-end pt-2">
-            <Button type="submit" loading={loading}>ذخیره تغییرات</Button>
+            <Button type="submit" loading={save.pending} disabled={save.pending}>ذخیره تغییرات</Button>
           </div>
         </form>
       </Card>

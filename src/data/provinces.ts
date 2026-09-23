@@ -1,79 +1,12 @@
-import type { Coupon, ShippingMethod } from "@/types";
-
 /**
- * Shipping options.
+ * Iranian provinces and their major cities.
  *
- * Tipax is the only live courier today and it is **postpaid**: the customer pays
- * the courier on delivery, so its cost is deliberately excluded from the online
- * payable amount everywhere in the checkout. The array is ordered — add new
- * couriers here and the checkout renders them without further changes.
+ * Deliberately static reference data, not a database table: this list changes
+ * on the order of decades, nobody administers it, and an address form needs it
+ * synchronously. Everything else that used to live alongside it — shipping
+ * methods, coupons, sizes — is now in PostgreSQL and administered from the
+ * admin panel.
  */
-export const shippingMethods: ShippingMethod[] = [
-  {
-    id: "tipax",
-    name: "تیپاکس (پس‌کرایه)",
-    description: "ارسال به سراسر ایران. هزینه ارسال هنگام تحویل مرسوله نزد مأمور تیپاکس پرداخت می‌شود.",
-    cost: 0,
-    paidOnDelivery: true,
-    estimate: "۲ تا ۴ روز کاری",
-    available: true,
-  },
-  {
-    id: "post",
-    name: "پست پیشتاز",
-    description: "به‌زودی فعال می‌شود.",
-    cost: 85_000,
-    paidOnDelivery: false,
-    estimate: "۳ تا ۷ روز کاری",
-    available: false,
-  },
-  {
-    id: "courier",
-    name: "پیک فوری (ویژه یزد)",
-    description: "به‌زودی فعال می‌شود.",
-    cost: 120_000,
-    paidOnDelivery: false,
-    estimate: "همان روز",
-    available: false,
-  },
-];
-
-export const defaultShippingMethod = shippingMethods[0];
-
-/** Mock coupon book. Codes are matched case-insensitively. */
-export const coupons: Coupon[] = [
-  {
-    code: "LORAN10",
-    type: "percent",
-    value: 10,
-    maxDiscount: 400_000,
-    description: "۱۰٪ تخفیف تا سقف ۴۰۰٬۰۰۰ تومان",
-  },
-  {
-    code: "WELCOME",
-    type: "fixed",
-    value: 200_000,
-    minSubtotal: 1_500_000,
-    description: "۲۰۰٬۰۰۰ تومان تخفیف اولین خرید (از ۱٬۵۰۰٬۰۰۰ تومان به بالا)",
-  },
-  {
-    code: "YAZD20",
-    type: "percent",
-    value: 20,
-    maxDiscount: 700_000,
-    minSubtotal: 2_500_000,
-    description: "۲۰٪ تخفیف کمپین یزد تا سقف ۷۰۰٬۰۰۰ تومان",
-  },
-  {
-    code: "EXPIRED",
-    type: "percent",
-    value: 15,
-    description: "کد منقضی‌شده (برای نمایش حالت خطا)",
-    expiresAt: "2024-01-01T00:00:00.000Z",
-  },
-];
-
-/** Iran's provinces, with the largest cities for each. Extend as needed. */
 export const provinces: { name: string; cities: string[] }[] = [
   { name: "یزد", cities: ["یزد", "میبد", "اردکان", "بافق", "مهریز", "تفت", "ابرکوه", "اشکذر"] },
   { name: "تهران", cities: ["تهران", "اسلامشهر", "شهریار", "ورامین", "پاکدشت", "رباط‌کریم", "قدس", "ملارد"] },
