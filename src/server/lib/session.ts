@@ -56,7 +56,7 @@ export interface AdminIdentity {
  */
 export async function createCustomerSession(
   customerId: string,
-  meta: { ip?: string; userAgent?: string } = {}
+  meta: { ip?: string | null; userAgent?: string } = {}
 ): Promise<string> {
   const jar = await cookies();
   const previous = jar.get(CUSTOMER_COOKIE)?.value;
@@ -139,7 +139,7 @@ export async function revokeAllCustomerSessions(customerId: string): Promise<voi
 
 export async function createAdminSession(
   adminId: string,
-  meta: { ip?: string; userAgent?: string } = {}
+  meta: { ip?: string | null; userAgent?: string } = {}
 ): Promise<string> {
   const jar = await cookies();
   const previous = jar.get(ADMIN_COOKIE)?.value;

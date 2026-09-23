@@ -3,13 +3,14 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
-  BarChart3, Boxes, ExternalLink, LayoutDashboard, Menu, Package, Settings, ShoppingCart,
-  Palette, Tags, TicketPercent, Users, X,
+  BarChart3, Boxes, ExternalLink, LayoutDashboard, LogOut, Menu, MessageSquare, Package,
+  RotateCcw, Settings, ShoppingCart, Palette, Star, Tags, TicketPercent, Users, X,
 } from "lucide-react";
 import { Logo } from "@/components/layout/Logo";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
-import { Alert } from "@/components/ui/Feedback";
+import { api } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -20,6 +21,9 @@ const NAV = [
   { label: "موجودی انبار", href: "/admin/inventory", icon: Boxes },
   { label: "تخفیف و کمپین", href: "/admin/discounts", icon: TicketPercent },
   { label: "مشتریان", href: "/admin/customers", icon: Users },
+  { label: "دیدگاه‌ها", href: "/admin/reviews", icon: Star },
+  { label: "مرجوعی و تعویض", href: "/admin/returns", icon: RotateCcw },
+  { label: "درخواست‌ها", href: "/admin/requests", icon: MessageSquare },
   { label: "گزارش‌ها", href: "/admin/reports", icon: BarChart3 },
   { label: "تنظیمات", href: "/admin/settings", icon: Settings },
   { label: "راهنمای طراحی", href: "/admin/design-system", icon: Palette },
@@ -29,12 +33,34 @@ const NAV = [
  * Admin shell.
  *
  * Visually distinct from the storefront — denser, darker rail, persistent
- * sidebar — while still unmistakably Loran. Nothing here is a real back office:
- * every screen reads mock data.
+ * sidebar — while still unmistakably Loran.
+ *
+ * `admin` is resolved server-side by the `(dashboard)` layout, which is also
+ * where access is actually enforced. Rendering it here is presentation only.
  */
-export function AdminShell({ children }: { children: React.ReactNode }) {
+export interface AdminShellProps {
+  children: React.ReactNode;
+  admin: { name: string; email: string };
+}
+
+export function AdminShell({ children, admin }: AdminShellProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+
+  const signOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await api.post("/api/v1/admin/auth/logout");
+    } finally {
+      // Navigate regardless: the cookie is cleared server-side, and a failed
+      // request should still take the administrator away from the panel.
+      router.replace("/admin/login");
+      router.refresh();
+    }
+  };
 
   const isActive = (href: string, exact?: boolean) => (exact ? pathname === href : pathname.startsWith(href));
 
@@ -88,6 +114,9 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         </div>
 
         <div className="flex items-center gap-1">
+          <span className="hidden max-w-40 truncate text-sm text-fg-muted md:inline" title={admin.email}>
+            {admin.name}
+          </span>
           <ThemeToggle />
           <Link
             href="/"
@@ -96,6 +125,16 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             <ExternalLink className="size-4" aria-hidden />
             <span className="hidden sm:inline">مشاهده فروشگاه</span>
           </Link>
+          <button
+            type="button"
+            onClick={signOut}
+            disabled={signingOut}
+            aria-busy={signingOut}
+            className="flex h-10 items-center gap-1.5 rounded-md px-3 text-sm text-fg-muted hover:bg-surface-2 hover:text-fg disabled:opacity-60"
+          >
+            <LogOut className="size-4" aria-hidden />
+            <span className="hidden sm:inline">{signingOut ? "در حال خروج…" : "خروج"}</span>
+          </button>
         </div>
       </header>
 
@@ -139,13 +178,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           </>
         )}
 
-        <main className="min-w-0 p-4 lg:p-6">
-          <Alert tone="info" className="mb-5" role="status" title="نمونه بصری پنل مدیریت">
-            این بخش فقط طراحی رابط کاربری است. داده‌ها ساختگی‌اند و هیچ عملیاتی روی سرور انجام
-            نمی‌شود. ساختار صفحه‌ها برای اتصال به بک‌اند آماده است.
-          </Alert>
-          {children}
-        </main>
+        <main className="min-w-0 p-4 lg:p-6">{children}</main>
       </div>
     </div>
   );

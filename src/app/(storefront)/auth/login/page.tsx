@@ -6,7 +6,8 @@ import { Smartphone } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Alert } from "@/components/ui/Feedback";
 import { useAuth } from "@/store/AuthProvider";
-import { isValidPhone, toLatinDigits, toPersianDigits } from "@/lib/format";
+import { isValidPhone, toLatinDigits } from "@/lib/format";
+import { errorMessage } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
 
 function LoginForm() {
@@ -32,8 +33,15 @@ function LoginForm() {
     }
     setError(null);
     setLoading(true);
-    await requestOtp(normalized);
-    router.push(`/auth/verify?redirect=${encodeURIComponent(redirect)}`);
+    try {
+      await requestOtp(normalized);
+      router.push(`/auth/verify?redirect=${encodeURIComponent(redirect)}`);
+    } catch (err) {
+      // The button must come back so the customer can retry — a rate limit or
+      // an SMS provider outage is recoverable.
+      setError(errorMessage(err));
+      setLoading(false);
+    }
   };
 
   return (
@@ -43,7 +51,7 @@ function LoginForm() {
         شماره موبایل خود را وارد کنید. کد تأیید برای شما پیامک می‌شود.
       </p>
 
-      <form onSubmit={submit} noValidate className="mt-6">
+      <form onSubmit={submit} noValidate className="mt-6" aria-busy={loading}>
         <label htmlFor="phone" className="mb-1.5 block text-sm font-medium text-fg">
           شماره موبایل <span className="text-primary" aria-hidden>*</span>
         </label>
@@ -57,6 +65,7 @@ function LoginForm() {
             dir="ltr"
             value={phone}
             onChange={(e) => { setPhone(e.target.value); setError(null); }}
+            disabled={loading}
             placeholder="09123456789"
             aria-invalid={!!error || undefined}
             aria-describedby={error ? "phone-error" : "phone-hint"}
@@ -75,14 +84,17 @@ function LoginForm() {
           </p>
         )}
 
-        <Button type="submit" size="lg" fullWidth loading={loading} className="mt-5">
+        <Button type="submit" size="lg" fullWidth loading={loading} disabled={loading} className="mt-5">
           دریافت کد تأیید
         </Button>
       </form>
 
-      <Alert tone="info" className="mt-6" title="حالت نمایشی">
-        این نسخه بدون سامانه پیامک کار می‌کند. در صفحه بعد کد{" "}
-        <strong className="tnum" dir="ltr">{toPersianDigits("11111")}</strong> را وارد کنید.
+      <Alert tone="info" className="mt-6">
+        با ورود به لوران،{" "}
+        <a href="/terms" className="font-medium text-primary hover:underline">قوانین و مقررات</a>{" "}
+        و{" "}
+        <a href="/privacy" className="font-medium text-primary hover:underline">حریم خصوصی</a>{" "}
+        را می‌پذیرید.
       </Alert>
     </div>
   );

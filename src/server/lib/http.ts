@@ -64,19 +64,27 @@ function toApiError(error: unknown): ApiError {
 }
 
 export interface RequestContext {
-  ip: string;
+  /**
+   * The client address, or null when it cannot be established.
+   *
+   * Null is meaningful: callers must *skip* an IP-scoped rate limit rather than
+   * fall back to a placeholder. Bucketing every unidentified client under one
+   * key would turn a per-IP limit into a global one and let a single visitor
+   * lock the whole site out of signing in.
+   */
+  ip: string | null;
   userAgent: string;
 }
 
 export function requestContext(request: Request): RequestContext {
   const headers = request.headers;
-  // Only trust forwarding headers when the deployment says it sits behind a
-  // proxy — otherwise a client could spoof its way past an IP rate limit.
+  // Forwarding headers are only trusted when the deployment says it sits behind
+  // a proxy — otherwise a client could spoof its way past an IP rate limit.
   const forwarded = env.TRUST_PROXY
     ? headers.get("x-forwarded-for")?.split(",")[0]?.trim() || headers.get("x-real-ip")
     : null;
   return {
-    ip: forwarded || "0.0.0.0",
+    ip: forwarded || null,
     userAgent: headers.get("user-agent")?.slice(0, 255) ?? "",
   };
 }

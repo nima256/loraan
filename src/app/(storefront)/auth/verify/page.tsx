@@ -9,24 +9,32 @@ import { Input } from "@/components/ui/Input";
 import { Alert } from "@/components/ui/Feedback";
 import { useToast } from "@/components/ui/Toast";
 import { useAuth } from "@/store/AuthProvider";
-import { formatPhone, formatTimer, toLatinDigits } from "@/lib/format";
+import { formatPhone, formatTimer, toLatinDigits, toPersianDigits } from "@/lib/format";
+import { errorMessage } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
 
 const OTP_LENGTH = 5;
-const RESEND_SECONDS = 90;
+/** Only a first guess — the server's real cooldown replaces it on the first response. */
+const DEFAULT_RESEND_SECONDS = 60;
 
 function VerifyForm() {
   const router = useRouter();
   const params = useSearchParams();
   const { toast } = useToast();
-  const { pendingPhone, verifyOtp, requestOtp, completeProfile } = useAuth();
+  const {
+    pendingPhone, pendingDevCode, pendingResendAfter,
+    verifyOtp, requestOtp, completeProfile,
+  } = useAuth();
   const redirect = params.get("redirect") ?? "/account";
 
   const [digits, setDigits] = useState<string[]>(Array(OTP_LENGTH).fill(""));
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [seconds, setSeconds] = useState(RESEND_SECONDS);
+  const [seconds, setSeconds] = useState(pendingResendAfter || DEFAULT_RESEND_SECONDS);
   const [needsProfile, setNeedsProfile] = useState(false);
+  const [resending, setResending] = useState(false);
+  /** Set only when the server runs in explicit mock-OTP mode (never in production). */
+  const [devCode, setDevCode] = useState<string | null>(pendingDevCode);
   const inputs = useRef<(HTMLInputElement | null)[]>([]);
 
   // No phone in flight means the user landed here directly.
@@ -43,6 +51,7 @@ function VerifyForm() {
   useEffect(() => { inputs.current[0]?.focus(); }, []);
 
   const submit = useCallback(async (code: string) => {
+    if (loading) return;
     setLoading(true);
     const result = await verifyOtp(code);
     setLoading(false);
@@ -58,7 +67,7 @@ function VerifyForm() {
     }
     toast({ tone: "success", title: "خوش آمدید", description: "با موفقیت وارد حساب خود شدید." });
     router.push(redirect);
-  }, [verifyOtp, router, redirect, toast]);
+  }, [loading, verifyOtp, router, redirect, toast]);
 
   const setDigit = (index: number, value: string) => {
     const clean = toLatinDigits(value).replace(/\D/g, "");
@@ -89,17 +98,35 @@ function VerifyForm() {
   };
 
   const resend = async () => {
-    if (!pendingPhone || seconds > 0) return;
-    await requestOtp(pendingPhone);
-    setSeconds(RESEND_SECONDS);
-    setDigits(Array(OTP_LENGTH).fill(""));
-    setError(null);
-    inputs.current[0]?.focus();
-    toast({ tone: "info", title: "کد تأیید دوباره ارسال شد" });
+    if (!pendingPhone || seconds > 0 || resending) return;
+    setResending(true);
+    try {
+      const result = await requestOtp(pendingPhone);
+      // The countdown comes from the server's cooldown, so the button can never
+      // re-enable before the API would accept another request.
+      setSeconds(result.resendAfterSeconds);
+      setDevCode(result.devCode ?? null);
+      setDigits(Array(OTP_LENGTH).fill(""));
+      setError(null);
+      inputs.current[0]?.focus();
+      toast({ tone: "info", title: "کد تأیید دوباره ارسال شد" });
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setResending(false);
+    }
   };
 
   if (needsProfile) {
-    return <CompleteProfile onDone={(data) => { completeProfile(data); router.push(redirect); }} />;
+    return (
+      <CompleteProfile
+        onDone={async (data) => {
+          await completeProfile(data);
+          toast({ tone: "success", title: "خوش آمدید", description: "حساب شما آماده است." });
+          router.push(redirect);
+        }}
+      />
+    );
   }
 
   return (
@@ -167,36 +194,57 @@ function VerifyForm() {
             ارسال دوباره کد تا {formatTimer(seconds)} دیگر
           </p>
         ) : (
-          <button type="button" onClick={resend} className="min-h-11 font-medium text-primary hover:underline dark:text-[color:var(--primary-soft-fg)]">
-            ارسال دوباره کد تأیید
+          <button
+            type="button"
+            onClick={resend}
+            disabled={resending}
+            aria-busy={resending}
+            className="min-h-11 font-medium text-primary hover:underline disabled:opacity-60 disabled:no-underline dark:text-[color:var(--primary-soft-fg)]"
+          >
+            {resending ? "در حال ارسال…" : "ارسال دوباره کد تأیید"}
           </button>
         )}
       </div>
 
-      <Alert tone="info" className="mt-6">
-        حالت نمایشی: کد <strong className="tnum" dir="ltr">۱۱۱۱۱</strong> را وارد کنید.
-      </Alert>
+      {devCode && (
+        <Alert tone="warning" className="mt-6" title="حالت توسعه">
+          سامانه پیامک در این محیط غیرفعال است. کد تأیید:{" "}
+          <strong className="tnum" dir="ltr">{toPersianDigits(devCode)}</strong>
+        </Alert>
+      )}
     </div>
   );
 }
 
-/** Shown only for a phone number that has no account yet. */
-function CompleteProfile({ onDone }: { onDone: (data: { firstName: string; lastName: string; email?: string }) => void }) {
+/** Shown only for a phone number whose profile has no name yet. */
+function CompleteProfile({
+  onDone,
+}: {
+  onDone: (data: { firstName: string; lastName: string; email?: string }) => Promise<void>;
+}) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [errors, setErrors] = useState<{ firstName?: string; lastName?: string }>({});
+  const [formError, setFormError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (loading) return;
     const next: typeof errors = {};
     if (!firstName.trim()) next.firstName = "نام را وارد کنید.";
     if (!lastName.trim()) next.lastName = "نام خانوادگی را وارد کنید.";
     setErrors(next);
     if (Object.keys(next).length) return;
+
+    setFormError(null);
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 500));
-    onDone({ firstName: firstName.trim(), lastName: lastName.trim() });
+    try {
+      await onDone({ firstName: firstName.trim(), lastName: lastName.trim() });
+    } catch (err) {
+      setFormError(errorMessage(err));
+      setLoading(false);
+    }
   };
 
   return (
@@ -205,7 +253,7 @@ function CompleteProfile({ onDone }: { onDone: (data: { firstName: string; lastN
       <p className="mt-2 text-sm leading-7 text-fg-muted">
         شماره شما تأیید شد. برای اینکه سفارش‌ها به نام شما ثبت شود، نام و نام خانوادگی را وارد کنید.
       </p>
-      <form onSubmit={submit} noValidate className="mt-6 space-y-4">
+      <form onSubmit={submit} noValidate className="mt-6 space-y-4" aria-busy={loading}>
         <Input
           label="نام"
           required
@@ -222,7 +270,8 @@ function CompleteProfile({ onDone }: { onDone: (data: { firstName: string; lastN
           onChange={(e) => { setLastName(e.target.value); setErrors((s) => ({ ...s, lastName: undefined })); }}
           error={errors.lastName}
         />
-        <Button type="submit" size="lg" fullWidth loading={loading}>ادامه</Button>
+        {formError && <Alert tone="danger" role="alert">{formError}</Alert>}
+        <Button type="submit" size="lg" fullWidth loading={loading} disabled={loading}>ادامه</Button>
       </form>
     </div>
   );

@@ -54,12 +54,22 @@ export async function consumeRateLimit(
   };
 }
 
-/** Consumes a slot and throws the shared `rate_limited` error when exhausted. */
+/**
+ * Consumes a slot and throws the shared `rate_limited` error when exhausted.
+ *
+ * A null identifier is a no-op. That is the deliberate behaviour for IP-scoped
+ * limits when the client address cannot be established (TRUST_PROXY off): the
+ * alternative — bucketing every such client under one placeholder key — would
+ * make one visitor able to rate-limit everyone else. The identity-scoped limit
+ * that sits beside every IP limit is the one that actually protects the
+ * resource.
+ */
 export async function enforceRateLimit(
   rule: RateLimitRule,
-  identifier: string,
+  identifier: string | null | undefined,
   message?: string
 ): Promise<void> {
+  if (!identifier) return;
   const result = await consumeRateLimit(rule, identifier);
   if (!result.allowed) throw rateLimited(result.retryAfter, message);
 }

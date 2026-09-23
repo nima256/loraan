@@ -397,8 +397,8 @@ export default function CheckoutPage() {
             phone: user?.phone,
             isDefault: addresses.length === 0,
           }}
-          onSubmit={(data) => {
-            const created = addAddress(data);
+          onSubmit={async (data) => {
+            const created = await addAddress(data);
             setAddressId(created.id);
             setAddressModalOpen(false);
             toast({ tone: "success", title: "آدرس جدید ثبت شد" });

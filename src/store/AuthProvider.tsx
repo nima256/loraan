@@ -1,23 +1,35 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { mockAddresses, mockUser } from "@/data/account";
-import { toLatinDigits } from "@/lib/format";
+import { api, ApiClientError, errorMessage } from "@/lib/api/client";
+import { normalizeIranMobile } from "@/lib/persian";
 import type { Address, User } from "@/types";
 
-const STORAGE_KEY = "loran:auth";
-
 /**
- * Mock authentication.
+ * Customer authentication, backed by the real API.
  *
- * ⚠️ There is no auth server and no real OTP — the code below accepts a fixed
- * demo code and stores a flag in localStorage. It exists so every screen and
- * state in the sign-in flow is designed and reachable.
+ * The session itself lives in an HttpOnly cookie the browser cannot read, so
+ * this provider holds only the *profile*, and treats `GET /auth/me` as the
+ * single source of truth for whether anyone is signed in. Nothing about the
+ * session is persisted to localStorage — a stale flag there could otherwise
+ * claim a signed-in user after the server session had expired.
  *
- * ▶ Backend swap: `requestOtp` → `POST /auth/otp`, `verifyOtp` → `POST /auth/verify`
- *   returning a session cookie. Nothing else in the UI changes.
+ * The context surface is unchanged from the pre-backend version, so every
+ * screen that consumed it keeps working.
  */
-export const DEMO_OTP = "11111";
+
+interface OtpRequestResult {
+  resendAfterSeconds: number;
+  expiresInSeconds: number;
+  /** Returned only when the server runs in explicit mock-OTP mode. */
+  devCode?: string;
+}
+
+interface VerifyResult {
+  ok: boolean;
+  isNewUser: boolean;
+  message?: string;
+}
 
 interface AuthContextValue {
   user: User | null;
@@ -26,15 +38,24 @@ interface AuthContextValue {
   hydrating: boolean;
   /** Phone currently going through verification. */
   pendingPhone: string | null;
-  requestOtp: (phone: string) => Promise<void>;
-  verifyOtp: (code: string) => Promise<{ ok: boolean; isNewUser: boolean; message?: string }>;
-  completeProfile: (data: { firstName: string; lastName: string; email?: string }) => void;
-  updateUser: (data: Partial<User>) => void;
-  addAddress: (address: Omit<Address, "id">) => Address;
-  updateAddress: (id: string, data: Partial<Address>) => void;
-  removeAddress: (id: string) => void;
-  setDefaultAddress: (id: string) => void;
-  logout: () => void;
+  /**
+   * The code for the challenge in flight, set only when the server runs in
+   * explicit mock-OTP mode. `env` refuses to boot production with that mode on,
+   * so this is always null in a real deployment.
+   */
+  pendingDevCode: string | null;
+  /** Server-dictated resend cooldown for the challenge in flight, in seconds. */
+  pendingResendAfter: number;
+  requestOtp: (phone: string) => Promise<OtpRequestResult>;
+  verifyOtp: (code: string) => Promise<VerifyResult>;
+  completeProfile: (data: { firstName: string; lastName: string; email?: string }) => Promise<void>;
+  updateUser: (data: Partial<User>) => Promise<void>;
+  addAddress: (address: Omit<Address, "id">) => Promise<Address>;
+  updateAddress: (id: string, data: Partial<Address>) => Promise<void>;
+  removeAddress: (id: string) => Promise<void>;
+  setDefaultAddress: (id: string) => Promise<void>;
+  refresh: () => Promise<void>;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -45,130 +66,140 @@ export function useAuth() {
   return ctx;
 }
 
+interface SessionPayload {
+  user: User | null;
+  addresses: Address[];
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [addresses, setAddresses] = useState<Address[]>(mockAddresses);
+  const [addresses, setAddresses] = useState<Address[]>([]);
   const [pendingPhone, setPendingPhone] = useState<string | null>(null);
+  const [pendingDevCode, setPendingDevCode] = useState<string | null>(null);
+  const [pendingResendAfter, setPendingResendAfter] = useState(60);
   const [hydrating, setHydrating] = useState(true);
 
+  const refresh = useCallback(async () => {
+    try {
+      const data = await api.get<SessionPayload>("/api/v1/auth/me");
+      setUser(data.user);
+      setAddresses(data.addresses);
+    } catch {
+      // A failed bootstrap means "not signed in" as far as the UI is concerned.
+      setUser(null);
+      setAddresses([]);
+    }
+  }, []);
+
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      await refresh();
+      if (!cancelled) setHydrating(false);
+    })();
+    return () => { cancelled = true; };
+  }, [refresh]);
+
+  const requestOtp = useCallback(async (phone: string): Promise<OtpRequestResult> => {
+    const normalized = normalizeIranMobile(phone);
+    const data = await api.post<{
+      phone: string;
+      expiresInSeconds: number;
+      resendAfterSeconds: number;
+      devCode?: string;
+    }>("/api/v1/auth/request-otp", { phone: normalized || phone });
+    setPendingPhone(data.phone);
+    setPendingDevCode(data.devCode ?? null);
+    setPendingResendAfter(data.resendAfterSeconds);
+    return {
+      expiresInSeconds: data.expiresInSeconds,
+      resendAfterSeconds: data.resendAfterSeconds,
+      devCode: data.devCode,
+    };
+  }, []);
+
+  const verifyOtp = useCallback(async (code: string): Promise<VerifyResult> => {
+    if (!pendingPhone) {
+      return { ok: false, isNewUser: false, message: "ابتدا شماره موبایل خود را وارد کنید." };
+    }
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as { user?: User; addresses?: Address[] };
-        if (parsed.user) setUser(parsed.user);
-        if (parsed.addresses?.length) setAddresses(parsed.addresses);
-      }
-    } catch {
-      // Ignore a corrupted session and stay signed out.
+      const data = await api.post<{ user: User; addresses: Address[]; needsProfile: boolean }>(
+        "/api/v1/auth/verify-otp",
+        { phone: pendingPhone, code }
+      );
+      setUser(data.user);
+      setAddresses(data.addresses);
+      // The challenge is spent; drop anything still referring to it.
+      setPendingDevCode(null);
+      return { ok: true, isNewUser: data.needsProfile };
+    } catch (error) {
+      return { ok: false, isNewUser: false, message: errorMessage(error) };
     }
-    setHydrating(false);
+  }, [pendingPhone]);
+
+  const completeProfile = useCallback(
+    async (data: { firstName: string; lastName: string; email?: string }) => {
+      const updated = await api.patch<{ user: User }>("/api/v1/account/profile", data);
+      setUser(updated.user);
+    },
+    []
+  );
+
+  const updateUser = useCallback(async (data: Partial<User>) => {
+    const updated = await api.patch<{ user: User }>("/api/v1/account/profile", data);
+    setUser(updated.user);
   }, []);
 
-  const persist = useCallback((nextUser: User | null, nextAddresses: Address[]) => {
+  const addAddress = useCallback(async (address: Omit<Address, "id">) => {
+    const result = await api.post<{ address: Address; addresses: Address[] }>(
+      "/api/v1/account/addresses",
+      address
+    );
+    setAddresses(result.addresses);
+    return result.address;
+  }, []);
+
+  const updateAddress = useCallback(async (id: string, data: Partial<Address>) => {
+    const result = await api.patch<{ addresses: Address[] }>(
+      `/api/v1/account/addresses/${id}`,
+      data
+    );
+    setAddresses(result.addresses);
+  }, []);
+
+  const removeAddress = useCallback(async (id: string) => {
+    const result = await api.delete<{ addresses: Address[] }>(`/api/v1/account/addresses/${id}`);
+    setAddresses(result.addresses);
+  }, []);
+
+  const setDefaultAddress = useCallback(async (id: string) => {
+    const result = await api.post<{ addresses: Address[] }>(
+      `/api/v1/account/addresses/${id}/default`
+    );
+    setAddresses(result.addresses);
+  }, []);
+
+  const logout = useCallback(async () => {
     try {
-      if (nextUser) localStorage.setItem(STORAGE_KEY, JSON.stringify({ user: nextUser, addresses: nextAddresses }));
-      else localStorage.removeItem(STORAGE_KEY);
-    } catch {
-      // Non-fatal: the session simply won't survive a reload.
+      await api.post("/api/v1/auth/logout");
+    } catch (error) {
+      // The cookie may already be gone; clearing local state is still correct.
+      if (!(error instanceof ApiClientError)) throw error;
     }
-  }, []);
-
-  const requestOtp = useCallback(async (phone: string) => {
-    setPendingPhone(toLatinDigits(phone).replace(/\s/g, ""));
-    await new Promise((r) => setTimeout(r, 700));
-  }, []);
-
-  const verifyOtp = useCallback(async (code: string) => {
-    await new Promise((r) => setTimeout(r, 700));
-    if (toLatinDigits(code) !== DEMO_OTP) {
-      return { ok: false, isNewUser: false, message: "کد وارد شده صحیح نیست. دوباره تلاش کنید." };
-    }
-    // Demo rule: the seeded account signs straight in, any other number is new.
-    const isKnown = pendingPhone === mockUser.phone;
-    const nextUser: User = isKnown
-      ? mockUser
-      : {
-          id: `u-${Date.now()}`,
-          phone: pendingPhone ?? "",
-          createdAt: new Date().toISOString(),
-          smsNotifications: true,
-        };
-    const nextAddresses = isKnown ? mockAddresses : [];
-    setUser(nextUser);
-    setAddresses(nextAddresses);
-    persist(nextUser, nextAddresses);
-    return { ok: true, isNewUser: !isKnown };
-  }, [pendingPhone, persist]);
-
-  const completeProfile = useCallback((data: { firstName: string; lastName: string; email?: string }) => {
-    setUser((current) => {
-      if (!current) return current;
-      const next = { ...current, ...data };
-      persist(next, addresses);
-      return next;
-    });
-  }, [addresses, persist]);
-
-  const updateUser = useCallback((data: Partial<User>) => {
-    setUser((current) => {
-      if (!current) return current;
-      const next = { ...current, ...data };
-      persist(next, addresses);
-      return next;
-    });
-  }, [addresses, persist]);
-
-  const addAddress = useCallback((address: Omit<Address, "id">) => {
-    const created: Address = { ...address, id: `a-${Date.now()}` };
-    setAddresses((list) => {
-      const next = created.isDefault
-        ? [...list.map((a) => ({ ...a, isDefault: false })), created]
-        : [...list, created];
-      persist(user, next);
-      return next;
-    });
-    return created;
-  }, [user, persist]);
-
-  const updateAddress = useCallback((id: string, data: Partial<Address>) => {
-    setAddresses((list) => {
-      const next = list.map((a) => (a.id === id ? { ...a, ...data } : a));
-      persist(user, next);
-      return next;
-    });
-  }, [user, persist]);
-
-  const removeAddress = useCallback((id: string) => {
-    setAddresses((list) => {
-      const next = list.filter((a) => a.id !== id);
-      // Never leave the account without a default address.
-      if (next.length && !next.some((a) => a.isDefault)) next[0] = { ...next[0], isDefault: true };
-      persist(user, next);
-      return next;
-    });
-  }, [user, persist]);
-
-  const setDefaultAddress = useCallback((id: string) => {
-    setAddresses((list) => {
-      const next = list.map((a) => ({ ...a, isDefault: a.id === id }));
-      persist(user, next);
-      return next;
-    });
-  }, [user, persist]);
-
-  const logout = useCallback(() => {
     setUser(null);
+    setAddresses([]);
     setPendingPhone(null);
-    persist(null, addresses);
-  }, [addresses, persist]);
+    setPendingDevCode(null);
+  }, []);
 
   const value = useMemo<AuthContextValue>(() => ({
-    user, addresses, isAuthenticated: !!user, hydrating, pendingPhone,
+    user, addresses, isAuthenticated: !!user, hydrating,
+    pendingPhone, pendingDevCode, pendingResendAfter,
     requestOtp, verifyOtp, completeProfile, updateUser,
-    addAddress, updateAddress, removeAddress, setDefaultAddress, logout,
-  }), [user, addresses, hydrating, pendingPhone, requestOtp, verifyOtp, completeProfile,
-       updateUser, addAddress, updateAddress, removeAddress, setDefaultAddress, logout]);
+    addAddress, updateAddress, removeAddress, setDefaultAddress, refresh, logout,
+  }), [user, addresses, hydrating, pendingPhone, pendingDevCode, pendingResendAfter,
+       requestOtp, verifyOtp, completeProfile,
+       updateUser, addAddress, updateAddress, removeAddress, setDefaultAddress, refresh, logout]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

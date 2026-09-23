@@ -57,7 +57,7 @@ export interface AuditInput {
   /** One safe Persian sentence describing the change. No secrets. */
   summary: string;
   meta?: Record<string, unknown>;
-  ip?: string;
+  ip?: string | null;
 }
 
 /**
