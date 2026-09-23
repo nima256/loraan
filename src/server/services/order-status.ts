@@ -17,8 +17,11 @@ import type { OrderStatus } from "@prisma/client";
 /** Allowed next statuses for each status. */
 const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   awaiting_payment: ["preparing", "cancelled", "payment_failed", "expired"],
-  // `preparing` is where a paid order lands.
-  preparing: ["packaged", "cancelled", "refunded"],
+  // `preparing` is where a paid order lands. Shipping directly from here is
+  // allowed as well as via `packaged`: a small shop often picks, packs and
+  // hands the parcel to the courier in one go, and entering a tracking code
+  // should advance the order rather than silently leave it behind.
+  preparing: ["packaged", "shipped", "cancelled", "refunded"],
   packaged: ["shipped", "preparing", "cancelled"],
   shipped: ["delivered", "returned"],
   delivered: ["returned", "refunded"],
