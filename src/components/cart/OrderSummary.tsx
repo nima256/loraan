@@ -1,11 +1,17 @@
 import Link from "next/link";
 import { Info } from "lucide-react";
 import { PriceInline } from "@/components/ui/Price";
-import { shippingMethods } from "@/data/commerce";
 import { siteConfig } from "@/lib/site-config";
 import { formatAmount } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { OrderTotals, ShippingMethodId } from "@/types";
+import type { OrderTotals, ShippingMethod, ShippingMethodId } from "@/types";
+
+/** Labels for rendering a shipping method when only its code is available. */
+const FALLBACK_METHOD_NAMES: Record<string, string> = {
+  tipax: "تیپاکس (پس‌کرایه)",
+  post: "پست پیشتاز",
+  courier: "پیک فوری",
+};
 
 /**
  * The money breakdown, shared by the cart, the checkout and the order detail.
@@ -13,18 +19,34 @@ import type { OrderTotals, ShippingMethodId } from "@/types";
  * The Tipax line is the important one: its cost is called out as *not* part of
  * the online payment, because a customer who thinks shipping is prepaid and is
  * then asked to pay the courier has been mis-sold.
+ *
+ * `totals` and `shippingMethod` are always supplied by the caller from the
+ * server's response. This component does no arithmetic of its own beyond
+ * rendering — nothing here decides what a customer pays.
  */
 export function OrderSummary({
-  totals, couponCode, shippingMethodId = "tipax", className, footer, compact,
+  totals, couponCode, shippingMethod, shippingMethodId, className, footer, compact,
 }: {
   totals: OrderTotals;
   couponCode?: string;
+  /** The method as the server resolved it. */
+  shippingMethod?: Pick<ShippingMethod, "name" | "cost" | "paidOnDelivery">;
+  /** Fallback label when only the code is to hand (e.g. a historic order). */
   shippingMethodId?: ShippingMethodId;
   className?: string;
   footer?: React.ReactNode;
   compact?: boolean;
 }) {
-  const method = shippingMethods.find((m) => m.id === shippingMethodId) ?? shippingMethods[0];
+  // Callers pass the method the server resolved. The fallback exists only so a
+  // caller that has nothing but a code still renders; it reports the cost from
+  // the totals and makes no claim about who collects it, because wrongly
+  // showing "pay the courier" is exactly the mis-sale this component guards
+  // against.
+  const method = shippingMethod ?? {
+    name: FALLBACK_METHOD_NAMES[shippingMethodId ?? "tipax"] ?? "ارسال",
+    cost: totals.shippingCost,
+    paidOnDelivery: false,
+  };
   const remainingForFree = siteConfig.commerce.freeShippingThreshold - totals.subtotal;
 
   return (

@@ -1,18 +1,18 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowLeft, FileText, Package, Search } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { ButtonLink } from "@/components/ui/Button";
 import { Tabs } from "@/components/ui/Navigation";
-import { EmptyState } from "@/components/ui/Feedback";
+import { Alert, EmptyState, Skeleton } from "@/components/ui/Feedback";
 import { PriceInline } from "@/components/ui/Price";
 import { OrderStatusBadge } from "@/components/account/OrderStatus";
-import { mockOrders } from "@/data/account";
+import { api, errorMessage } from "@/lib/api/client";
 import { formatDate, toLatinDigits, toPersianDigits } from "@/lib/format";
-import type { AnyOrderStatus } from "@/types";
+import type { AnyOrderStatus, Order } from "@/types";
 
 const TAB_FILTERS: Record<string, AnyOrderStatus[] | null> = {
   all: null,
@@ -24,11 +24,33 @@ const TAB_FILTERS: Record<string, AnyOrderStatus[] | null> = {
 function OrdersList() {
   const [tab, setTab] = useState("all");
   const [query, setQuery] = useState("");
+  const [orders, setOrders] = useState<Order[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<{ orders: Order[] }>("/api/v1/account/orders")
+      .then((data) => {
+        if (!cancelled) setOrders(data.orders);
+      })
+      .catch((caught) => {
+        if (!cancelled) {
+          setError(errorMessage(caught));
+          setOrders([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const all = useMemo(() => orders ?? [], [orders]);
 
   const filtered = useMemo(() => {
     const statuses = TAB_FILTERS[tab];
     const term = toLatinDigits(query).trim().toLowerCase();
-    return mockOrders.filter((order) => {
+    return all.filter((order) => {
       if (statuses && !statuses.includes(order.status)) return false;
       if (!term) return true;
       return (
@@ -36,13 +58,13 @@ function OrdersList() {
         order.items.some((item) => item.name.includes(query.trim()))
       );
     });
-  }, [tab, query]);
+  }, [all, tab, query]);
 
   const counts = {
-    all: mockOrders.length,
-    open: mockOrders.filter((o) => TAB_FILTERS.open!.includes(o.status)).length,
-    delivered: mockOrders.filter((o) => o.status === "delivered").length,
-    problem: mockOrders.filter((o) => TAB_FILTERS.problem!.includes(o.status)).length,
+    all: all.length,
+    open: all.filter((o) => TAB_FILTERS.open!.includes(o.status)).length,
+    delivered: all.filter((o) => o.status === "delivered").length,
+    problem: all.filter((o) => TAB_FILTERS.problem!.includes(o.status)).length,
   };
 
   return (
@@ -77,7 +99,13 @@ function OrdersList() {
         ]}
       />
 
-      {filtered.length === 0 ? (
+      {error && <Alert tone="danger" role="alert">{error}</Alert>}
+
+      {orders === null ? (
+        <div className="space-y-3" role="status" aria-label="در حال بارگذاری سفارش‌ها">
+          {[0, 1, 2].map((i) => <Skeleton key={i} className="h-40 w-full rounded-lg" />)}
+        </div>
+      ) : filtered.length === 0 ? (
         <EmptyState
           icon={<Package className="size-7" aria-hidden />}
           title={query ? "سفارشی با این مشخصات پیدا نشد" : "در این بخش سفارشی ندارید"}
@@ -101,12 +129,14 @@ function OrdersList() {
 
                 <div className="flex flex-wrap items-center justify-between gap-4 p-4">
                   <div className="flex -space-x-3 space-x-reverse">
-                    {order.items.slice(0, 4).map((item) => (
+                    {order.items.slice(0, 4).map((item, index) => (
                       <span
-                        key={item.variantId}
+                        key={`${item.variantId}-${index}`}
                         className="relative size-14 overflow-hidden rounded-md border-2 border-surface bg-surface-inset"
                       >
-                        <Image src={item.image} alt={item.name} fill sizes="56px" className="object-cover" />
+                        {item.image ? (
+                          <Image src={item.image} alt={item.name} fill sizes="56px" className="object-cover" />
+                        ) : null}
                       </span>
                     ))}
                     {order.items.length > 4 && (

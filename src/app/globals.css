@@ -384,12 +384,19 @@
 }
 
 /* ---------------------------------------------------------------------------
-   Print — invoices are the only thing meant to leave the screen.
+   Print — the customer invoice and the warehouse packing slip.
    ------------------------------------------------------------------------ */
 @media print {
   .no-print { display: none !important; }
   body { background: #fff; color: #000; }
   .print-sheet { box-shadow: none !important; border: none !important; margin: 0; padding: 0; max-width: none; }
+  /* URLs after links are noise on a printed sheet. */
   a[href]::after { content: ""; }
-  @page { margin: 14mm; }
+
+  /* Rows and blocks must not be split across pages — half a line item on one
+     page and half on the next is a picking error waiting to happen. */
+  tr, .print-keep { break-inside: avoid; page-break-inside: avoid; }
+  thead { display: table-header-group; }
+
+  @page { size: A4; margin: 14mm; }
 }

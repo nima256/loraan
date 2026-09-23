@@ -1,30 +1,94 @@
 "use client";
 
-import { use } from "react";
+import { use, useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowRight, Printer } from "lucide-react";
-import { Button } from "@/components/ui/Button";
-import { shippingMethods } from "@/data/commerce";
-import { getOrderByNumber } from "@/data/account";
+import { Button, ButtonLink } from "@/components/ui/Button";
+import { EmptyState, Skeleton } from "@/components/ui/Feedback";
+import { api, errorMessage } from "@/lib/api/client";
 import { PAYMENT_METHOD_LABELS } from "@/lib/orders";
 import { formatAmount, formatDate, formatPhone, toPersianDigits } from "@/lib/format";
 import { siteConfig } from "@/lib/site-config";
+import type { Order } from "@/types";
 
 /**
  * Printable invoice.
  *
  * Laid out on a white sheet with hairline rules so it prints legibly in mono;
- * everything that is screen-only (nav, buttons) carries `no-print`. Ready for a
- * server-side PDF renderer later — the markup needs no changes.
+ * everything that is screen-only (nav, buttons) carries `no-print`.
+ *
+ * Deliberately a simple customer invoice, not a legal/tax document: no VAT, no
+ * business identifiers. It renders entirely from the order's own snapshot, so
+ * an invoice printed today for a two-year-old order shows what was actually
+ * bought and paid, not today's catalogue.
  */
+type InvoiceOrder = Order & {
+  shippingMethodName: string;
+  shippingPaidOnDelivery: boolean;
+  carrier?: string;
+  paymentStatus: string;
+  customerName: string;
+  customerPhone: string;
+};
+
 export default function InvoicePage({ params }: { params: Promise<{ number: string }> }) {
   const { number } = use(params);
-  const order = getOrderByNumber(decodeURIComponent(number));
-  if (!order) notFound();
+  const [order, setOrder] = useState<InvoiceOrder | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  /** The print dialog is blocked until the data is really on the page. */
+  const [printing, setPrinting] = useState(false);
 
-  const method = shippingMethods.find((m) => m.id === order.shippingMethod) ?? shippingMethods[0];
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<{ order: InvoiceOrder }>(`/api/v1/account/orders/${encodeURIComponent(decodeURIComponent(number))}`)
+      .then((data) => {
+        if (!cancelled) setOrder(data.order);
+      })
+      .catch((caught) => {
+        if (!cancelled) setError(errorMessage(caught));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [number]);
+
+  const print = () => {
+    setPrinting(true);
+    // Let the pending label paint before the synchronous print dialog blocks
+    // the main thread, otherwise the button looks unresponsive.
+    requestAnimationFrame(() => {
+      window.print();
+      setPrinting(false);
+    });
+  };
+
+  if (error) {
+    return (
+      <EmptyState
+        title="فاکتور در دسترس نیست"
+        description={error}
+        action={<ButtonLink href="/account/orders">بازگشت به سفارش‌ها</ButtonLink>}
+      />
+    );
+  }
+
+  if (!order) {
+    return (
+      <div className="space-y-4" role="status" aria-label="در حال آماده‌سازی فاکتور">
+        <Skeleton className="h-10 w-48" />
+        <Skeleton className="h-[40rem] w-full rounded-lg" />
+      </div>
+    );
+  }
+
+  const method = {
+    name: order.shippingMethodName,
+    cost: order.totals.shippingCost,
+    paidOnDelivery: order.shippingPaidOnDelivery,
+  };
   const itemsTotal = order.totals.subtotal + order.totals.productDiscount;
 
   return (
@@ -34,8 +98,13 @@ export default function InvoicePage({ params }: { params: Promise<{ number: stri
           <ArrowRight className="size-4" aria-hidden />
           بازگشت به سفارش
         </Link>
-        <Button onClick={() => window.print()} icon={<Printer className="size-4" aria-hidden />}>
-          چاپ فاکتور
+        <Button
+          onClick={print}
+          loading={printing}
+          disabled={printing}
+          icon={<Printer className="size-4" aria-hidden />}
+        >
+          {printing ? "در حال آماده‌سازی…" : "چاپ فاکتور"}
         </Button>
       </div>
 
@@ -98,7 +167,7 @@ export default function InvoicePage({ params }: { params: Promise<{ number: stri
             </thead>
             <tbody>
               {order.items.map((item, i) => (
-                <tr key={item.variantId} className="border-b border-[#e4dace] align-top">
+                <tr key={`${item.variantId}-${i}`} className="border-b border-[#e4dace] align-top">
                   <td className="tnum py-3">{toPersianDigits(i + 1)}</td>
                   <td className="py-3 pe-2">{item.name}</td>
                   <td className="tnum py-3 pe-2 text-[#5f564e]">
@@ -150,16 +219,18 @@ export default function InvoicePage({ params }: { params: Promise<{ number: stri
         <section className="mt-5 grid gap-4 border-t border-[#e4dace] pt-5 text-xs sm:grid-cols-2">
           <div>
             <h3 className="mb-1.5 font-bold">اطلاعات پرداخت</h3>
-            <p className="text-[#5f564e]">روش: {PAYMENT_METHOD_LABELS[order.paymentMethod]}</p>
+            <p className="text-[#5f564e]">روش: {PAYMENT_METHOD_LABELS[order.paymentMethod] ?? order.paymentMethod}</p>
             {order.paymentRef && <p className="tnum text-[#5f564e]" dir="ltr">کد پیگیری: {order.paymentRef}</p>}
             {order.paidAt && <p className="text-[#5f564e]">تاریخ: {formatDate(order.paidAt)}</p>}
           </div>
           <div>
             <h3 className="mb-1.5 font-bold">اطلاعات ارسال</h3>
-            <p className="text-[#5f564e]">{method.name} — {method.estimate}</p>
+            <p className="text-[#5f564e]">{method.name}</p>
             {order.trackingCode && <p className="tnum text-[#5f564e]" dir="ltr">کد رهگیری: {order.trackingCode}</p>}
             {method.paidOnDelivery && (
-              <p className="mt-1 font-medium">کرایه ارسال هنگام تحویل، نزد مأمور تیپاکس پرداخت می‌شود.</p>
+              <p className="mt-1 font-medium">
+                کرایه ارسال هنگام تحویل، نزد مأمور {order.carrier ?? method.name} پرداخت می‌شود.
+              </p>
             )}
           </div>
         </section>
