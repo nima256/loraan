@@ -251,7 +251,14 @@ export interface OrderTimelineEntry {
   note?: string;
 }
 
-export type PaymentMethod = "online" | "snapppay" | "torobpay";
+/**
+ * How an order was paid for.
+ *
+ * "online" is the ZarinPal gateway — the only one Loran uses. The rest are
+ * ways a manually entered order was settled in person. A string rather than a
+ * union for the same reason as `ShippingMethodId`: the set is data, not code.
+ */
+export type PaymentMethod = string;
 
 export interface Order {
   id: ID;
@@ -273,7 +280,14 @@ export interface Order {
   smsNotifications: boolean;
 }
 
-export type ShippingMethodId = "tipax" | "post" | "courier";
+/**
+ * A shipping method's stable code.
+ *
+ * Deliberately a string rather than a union: shipping methods live in the
+ * database and an administrator can add one, so a closed union here would be a
+ * lie the moment they do. "tipax", "post" and "courier" are what ships seeded.
+ */
+export type ShippingMethodId = string;
 
 export interface ShippingMethod {
   id: ShippingMethodId;

@@ -1,44 +1,58 @@
-"use client";
-
-import { use, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowRight, FileText, Printer, Truck } from "lucide-react";
 import { AdminPageHeader } from "@/components/admin/AdminShell";
+import {
+  AdminNoteForm,
+  OrderStatusActions,
+  TrackingForm,
+} from "@/components/admin/OrderActions";
 import { Card } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { Input, Select } from "@/components/ui/Input";
-import { Alert } from "@/components/ui/Feedback";
 import { PriceInline } from "@/components/ui/Price";
 import { OrderStatusBadge, OrderTimeline } from "@/components/account/OrderStatus";
 import { OrderSummary } from "@/components/cart/OrderSummary";
-import { useToast } from "@/components/ui/Toast";
-import { getOrderByNumber } from "@/data/account";
-import { ORDER_STATUS_FLOW, ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS } from "@/lib/orders";
+import { getAdminOrder } from "@/server/services/order-queries";
+import { allowedTransitions } from "@/server/services/order-status";
+import { listTrackingCarriers } from "@/server/services/shipping";
+import { prisma } from "@/server/lib/prisma";
+import { PAYMENT_METHOD_LABELS } from "@/lib/orders";
 import { formatDateTime, formatPhone, toPersianDigits } from "@/lib/format";
-import type { AnyOrderStatus } from "@/types";
 
-const EXCEPTION_STATUSES: AnyOrderStatus[] = ["cancelled", "returned", "refunded", "payment_failed", "expired"];
+/**
+ * Admin order detail.
+ *
+ * A server component that loads the order, with client islands for the write
+ * actions. The status buttons offer only transitions the workflow permits, and
+ * the tracking code written here is the same row the customer's order page
+ * reads — there is no admin-only copy of it.
+ */
 
-export default function AdminOrderDetailPage({ params }: { params: Promise<{ number: string }> }) {
-  const { number } = use(params);
-  const order = getOrderByNumber(decodeURIComponent(number));
-  const { toast } = useToast();
-  const [status, setStatus] = useState<AnyOrderStatus | null>(order?.status ?? null);
-  const [tracking, setTracking] = useState(order?.trackingCode ?? "");
+export const dynamic = "force-dynamic";
 
-  if (!order || !status) notFound();
+export default async function AdminOrderDetailPage({
+  params,
+}: {
+  params: Promise<{ number: string }>;
+}) {
+  const { number } = await params;
 
-  const updateStatus = (next: AnyOrderStatus) => {
-    setStatus(next);
-    toast({
-      tone: "success",
-      title: "وضعیت سفارش تغییر کرد",
-      description: `وضعیت جدید: ${ORDER_STATUS_LABELS[next]}. (در این نسخه نمایشی پیامکی ارسال نمی‌شود.)`,
-    });
-  };
+  let order;
+  try {
+    order = await getAdminOrder(decodeURIComponent(number));
+  } catch {
+    notFound();
+  }
+
+  const [carriers, customer] = await Promise.all([
+    listTrackingCarriers(),
+    prisma.order
+      .findUnique({ where: { id: order.id }, select: { customerId: true } })
+      .then((row) => row?.customerId ?? null),
+  ]);
+
+  const allowed = allowedTransitions(order.status);
 
   return (
     <>
@@ -49,19 +63,23 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ num
 
       <AdminPageHeader
         title={order.number}
-        description={`ثبت شده در ${formatDateTime(order.createdAt)}`}
+        description={`ثبت شده در ${formatDateTime(order.createdAt)}${order.source === "manual" ? " — ثبت دستی" : ""}`}
         actions={
           <>
             <Link
-              href={`/account/orders/${order.number}/invoice`}
+              href={`/admin/orders/${order.number}/packing-slip`}
+              className="inline-flex h-12 items-center gap-2 rounded-md border border-border-strong bg-surface px-5 text-sm font-medium text-fg hover:bg-surface-2"
+            >
+              <Printer className="size-4" aria-hidden />
+              برگه بسته‌بندی
+            </Link>
+            <Link
+              href={`/admin/orders/${order.number}/invoice`}
               className="inline-flex h-12 items-center gap-2 rounded-md border border-border-strong bg-surface px-5 text-sm font-medium text-fg hover:bg-surface-2"
             >
               <FileText className="size-4" aria-hidden />
               فاکتور
             </Link>
-            <Button variant="secondary" icon={<Printer className="size-4" aria-hidden />}>
-              چاپ برگه بسته‌بندی
-            </Button>
           </>
         }
       />
@@ -71,45 +89,16 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ num
           <Card>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <h2 className="font-bold text-fg">وضعیت سفارش</h2>
-              <OrderStatusBadge status={status} />
+              <OrderStatusBadge status={order.status} />
             </div>
 
-            <OrderTimeline status={status} timeline={order.timeline} />
+            <OrderTimeline status={order.status} timeline={order.timeline} />
 
-            <div className="mt-6 border-t border-border pt-4">
-              <h3 className="mb-3 text-sm font-medium text-fg">تغییر وضعیت</h3>
-              <div className="flex flex-wrap gap-2">
-                {ORDER_STATUS_FLOW.map((flowStatus) => (
-                  <Button
-                    key={flowStatus}
-                    size="sm"
-                    variant={flowStatus === status ? "primary" : "secondary"}
-                    onClick={() => updateStatus(flowStatus)}
-                  >
-                    {ORDER_STATUS_LABELS[flowStatus]}
-                  </Button>
-                ))}
-              </div>
-
-              <h3 className="mb-2 mt-5 text-sm font-medium text-fg">وضعیت‌های استثنا</h3>
-              <div className="flex flex-wrap gap-2">
-                {EXCEPTION_STATUSES.map((exception) => (
-                  <Button
-                    key={exception}
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => updateStatus(exception)}
-                    className={exception === status ? "bg-danger-soft text-danger" : "text-fg-muted hover:text-danger"}
-                  >
-                    {ORDER_STATUS_LABELS[exception]}
-                  </Button>
-                ))}
-              </div>
-
-              <Alert tone="info" className="mt-4">
-                با تغییر وضعیت، در نسخه نهایی یک پیامک اطلاع‌رسانی برای مشتری ارسال خواهد شد.
-              </Alert>
-            </div>
+            <OrderStatusActions
+              orderId={order.id}
+              status={order.status}
+              allowedStatuses={allowed}
+            />
           </Card>
 
           <Card>
@@ -117,26 +106,17 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ num
               <Truck className="size-4 text-fg-subtle" aria-hidden />
               اطلاعات ارسال
             </h2>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Select
-                label="شیوه ارسال"
-                defaultValue={order.shippingMethod}
-                options={[
-                  { value: "tipax", label: "تیپاکس (پس‌کرایه)" },
-                  { value: "post", label: "پست پیشتاز (غیرفعال)", disabled: true },
-                  { value: "courier", label: "پیک فوری (غیرفعال)", disabled: true },
-                ]}
-              />
-              <Input
-                label="کد رهگیری"
-                dir="ltr"
-                className="[&_input]:text-start"
-                value={tracking}
-                onChange={(e) => setTracking(e.target.value)}
-                placeholder="TPX…"
-                hint="پس از تحویل به تیپاکس وارد کنید."
-              />
-            </div>
+            <p className="mb-4 text-sm text-fg-muted">
+              شیوه ارسال این سفارش: <span className="font-medium text-fg">{order.shippingMethodName}</span>
+              {order.shippingPaidOnDelivery && " (پس‌کرایه)"}
+            </p>
+            <TrackingForm
+              orderId={order.id}
+              carriers={carriers.length ? carriers : [{ code: "tipax", name: "تیپاکس" }]}
+              currentCarrier={order.carrier}
+              currentCode={order.trackingCode}
+              smsAvailable={order.smsNotifications}
+            />
           </Card>
 
           <Card padded={false}>
@@ -144,10 +124,10 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ num
               اقلام سفارش ({toPersianDigits(order.items.length)} مورد)
             </h2>
             <ul className="divide-y divide-border">
-              {order.items.map((item) => (
-                <li key={item.variantId} className="flex gap-3 p-4">
+              {order.items.map((item, index) => (
+                <li key={`${item.variantId}-${index}`} className="flex gap-3 p-4">
                   <Link href={`/admin/products/${item.slug}`} className="relative size-16 shrink-0 overflow-hidden rounded-md bg-surface-inset">
-                    <Image src={item.image} alt="" fill sizes="64px" className="object-cover" />
+                    {item.image && <Image src={item.image} alt="" fill sizes="64px" className="object-cover" />}
                   </Link>
                   <div className="min-w-0 flex-1">
                     <Link href={`/admin/products/${item.slug}`} className="line-clamp-2 text-sm font-medium text-fg hover:text-primary dark:hover:text-[color:var(--primary-soft-fg)]">
@@ -167,18 +147,36 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ num
               ))}
             </ul>
           </Card>
+
+          <Card>
+            <h2 className="mb-3 font-bold text-fg">یادداشت‌ها</h2>
+            {order.customerNote && (
+              <div className="mb-4 rounded-md bg-surface-2 p-3">
+                <p className="mb-1 text-xs font-medium text-fg-subtle">یادداشت مشتری</p>
+                <p className="text-sm leading-7 text-fg">{order.customerNote}</p>
+              </div>
+            )}
+            <AdminNoteForm orderId={order.id} initial={order.adminNote} />
+          </Card>
         </div>
 
         <div className="space-y-4">
           <Card>
             <h2 className="mb-3 font-bold text-fg">مشتری</h2>
-            <p className="font-medium text-fg">
-              {order.address.recipientFirstName} {order.address.recipientLastName}
-            </p>
-            <p className="tnum mt-1 text-sm text-fg-muted" dir="ltr">{formatPhone(order.address.phone)}</p>
-            <Link href="/admin/customers" className="mt-3 inline-flex min-h-9 items-center text-sm text-primary hover:underline dark:text-[color:var(--primary-soft-fg)]">
-              مشاهده پروفایل مشتری
-            </Link>
+            <p className="font-medium text-fg">{order.customerName}</p>
+            <p className="tnum mt-1 text-sm text-fg-muted" dir="ltr">{formatPhone(order.customerPhone)}</p>
+            {order.customerEmail && (
+              <p className="mt-1 text-sm text-fg-muted" dir="ltr">{order.customerEmail}</p>
+            )}
+            {customer ? (
+              <Link href={`/admin/customers/${customer}`} className="mt-3 inline-flex min-h-9 items-center text-sm text-primary hover:underline dark:text-[color:var(--primary-soft-fg)]">
+                مشاهده پروفایل مشتری
+              </Link>
+            ) : (
+              <p className="mt-3 text-xs text-fg-subtle">
+                این سفارش به حساب کاربری متصل نیست (ثبت دستی).
+              </p>
+            )}
           </Card>
 
           <Card>
@@ -186,8 +184,19 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ num
             <p className="text-sm leading-7 text-fg-muted">
               {order.address.province}، {order.address.city}، {order.address.addressLine}
             </p>
+            {(order.address.plaque || order.address.unit) && (
+              <p className="tnum mt-1 text-sm text-fg-muted">
+                {order.address.plaque && `پلاک ${order.address.plaque}`}
+                {order.address.unit && `، واحد ${order.address.unit}`}
+              </p>
+            )}
             <p className="tnum mt-1 text-sm text-fg-muted">
               کد پستی: {toPersianDigits(order.address.postalCode)}
+            </p>
+            <p className="tnum mt-2 border-t border-border pt-2 text-sm text-fg-muted">
+              گیرنده: {order.address.recipientFirstName} {order.address.recipientLastName}
+              <br />
+              <span dir="ltr">{formatPhone(order.address.phone)}</span>
             </p>
           </Card>
 
@@ -196,7 +205,9 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ num
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between gap-3">
                 <dt className="text-fg-muted">روش</dt>
-                <dd className="text-fg">{PAYMENT_METHOD_LABELS[order.paymentMethod]}</dd>
+                <dd className="text-fg">
+                  {PAYMENT_METHOD_LABELS[order.paymentMethod] ?? order.paymentMethod}
+                </dd>
               </div>
               {order.paymentRef && (
                 <div className="flex justify-between gap-3">
@@ -207,9 +218,15 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ num
               <div className="flex justify-between gap-3">
                 <dt className="text-fg-muted">وضعیت</dt>
                 <dd>
-                  {order.paidAt
-                    ? <Badge tone="success" size="sm">پرداخت شده</Badge>
-                    : <Badge tone="warning" size="sm">پرداخت نشده</Badge>}
+                  {order.paymentStatus === "paid" ? (
+                    <Badge tone="success" size="sm">پرداخت شده</Badge>
+                  ) : order.paymentStatus === "refunded" ? (
+                    <Badge tone="info" size="sm">بازپرداخت شده</Badge>
+                  ) : order.paymentStatus === "failed" ? (
+                    <Badge tone="danger" size="sm">ناموفق</Badge>
+                  ) : (
+                    <Badge tone="warning" size="sm">پرداخت نشده</Badge>
+                  )}
                 </dd>
               </div>
             </dl>
@@ -218,7 +235,11 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ num
           <OrderSummary
             totals={order.totals}
             couponCode={order.couponCode}
-            shippingMethodId={order.shippingMethod}
+            shippingMethod={{
+              name: order.shippingMethodName,
+              cost: order.totals.shippingCost,
+              paidOnDelivery: order.shippingPaidOnDelivery,
+            }}
             compact
           />
         </div>

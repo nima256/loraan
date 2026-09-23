@@ -66,24 +66,42 @@ export function statusStep(status: AnyOrderStatus): number {
   return ORDER_STATUS_FLOW.indexOf(status as OrderStatus);
 }
 
-export const PAYMENT_METHOD_LABELS = {
+/**
+ * Payment-method labels.
+ *
+ * "online" is the ZarinPal gateway, the only one Loran uses. The others cover
+ * how a manually entered order was settled. A lookup that misses falls back to
+ * the raw code at the call site rather than rendering nothing.
+ */
+export const PAYMENT_METHOD_LABELS: Record<string, string> = {
   online: "پرداخت اینترنتی",
-  snapppay: "اسنپ‌پی (اعتباری)",
-  torobpay: "ترب‌پی (اعتباری)",
-} as const;
+  cash: "نقدی / حضوری",
+  card: "کارت به کارت",
+  pos: "دستگاه کارت‌خوان",
+  cod: "پرداخت در محل",
+};
 
-export const RETURN_STATUS_LABELS = {
+/** Mirrors the ReturnStatus enum in the database. */
+export const RETURN_STATUS_LABELS: Record<string, string> = {
   requested: "ثبت شده",
+  info_requested: "در انتظار اطلاعات تکمیلی",
   approved: "تأیید شده",
-  in_transit: "در مسیر بازگشت",
-  refunded: "بازپرداخت شد",
   rejected: "رد شده",
-} as const;
+  in_transit: "در مسیر بازگشت",
+  received: "دریافت شد",
+  completed: "تکمیل شده",
+  refunded: "بازپرداخت شد",
+  cancelled: "لغو شده",
+};
 
-export const RETURN_STATUS_TONE: Record<keyof typeof RETURN_STATUS_LABELS, StatusTone> = {
+export const RETURN_STATUS_TONE: Record<string, StatusTone> = {
   requested: "warning",
+  info_requested: "warning",
   approved: "info",
-  in_transit: "info",
-  refunded: "success",
   rejected: "danger",
+  in_transit: "info",
+  received: "info",
+  completed: "success",
+  refunded: "success",
+  cancelled: "neutral",
 };
