@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Plus, RotateCcw } from "lucide-react";
@@ -8,35 +8,116 @@ import { Card } from "@/components/ui/Card";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Overlay";
-import { Alert, EmptyState } from "@/components/ui/Feedback";
+import { Alert, EmptyState, Skeleton } from "@/components/ui/Feedback";
 import { Select, Textarea } from "@/components/ui/Input";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { QuantityStepper } from "@/components/ui/QuantityStepper";
 import { PriceInline } from "@/components/ui/Price";
 import { useToast } from "@/components/ui/Toast";
-import { mockOrders, mockReturnRequests } from "@/data/account";
-import { RETURN_STATUS_LABELS, RETURN_STATUS_TONE } from "@/lib/orders";
+import { api, errorMessage } from "@/lib/api/client";
+import { useAction } from "@/lib/use-action";
 import { formatDate, toPersianDigits } from "@/lib/format";
 import { siteConfig } from "@/lib/site-config";
-import type { ReturnRequest } from "@/types";
+
+/**
+ * Return and exchange requests.
+ *
+ * The customer picks specific *order items* and quantities, not just an order:
+ * a single shoe out of a three-pair order is the common case. Eligibility comes
+ * from the server — only delivered orders inside the return window, and only
+ * the quantity not already covered by an open request.
+ */
 
 const TONE_TO_BADGE: Record<string, BadgeTone> = {
-  neutral: "neutral", info: "info", success: "success", warning: "warning", danger: "danger",
+  requested: "warning",
+  info_requested: "warning",
+  approved: "info",
+  in_transit: "info",
+  received: "info",
+  completed: "success",
+  refunded: "success",
+  rejected: "danger",
+  cancelled: "neutral",
 };
 
 const REASONS = [
-  { value: "size", label: "سایز مناسب نبود" },
-  { value: "defect", label: "کالا ایراد داشت" },
-  { value: "wrong", label: "کالای اشتباه ارسال شد" },
-  { value: "different", label: "با تصویر سایت تفاوت داشت" },
-  { value: "other", label: "دلیل دیگر" },
+  "سایز مناسب نبود",
+  "رنگ یا مدل با تصویر تفاوت داشت",
+  "کالا ایراد یا نقص داشت",
+  "کالای اشتباه ارسال شد",
+  "نظرم عوض شد",
+  "دلیل دیگر",
 ];
+
+interface EligibleItem {
+  id: string;
+  name: string;
+  image: string;
+  colorName: string;
+  size: number;
+  unitPrice: number;
+  quantity: number;
+  available: number;
+}
+
+interface EligibleOrder {
+  id: string;
+  number: string;
+  createdAt: string;
+  deliveredAt?: string;
+  items: EligibleItem[];
+}
+
+interface ReturnRequestView {
+  id: string;
+  number: string;
+  orderNumber: string;
+  type: "return" | "exchange";
+  status: string;
+  statusLabel: string;
+  reason: string;
+  customerNote?: string;
+  adminNote?: string;
+  refundAmount: number;
+  createdAt: string;
+  items: { id: string; name: string; colorName: string; size: number; quantity: number; unitPrice: number }[];
+  timeline: { status: string; label: string; note?: string; at: string }[];
+}
+
+interface ReturnsPayload {
+  requests: ReturnRequestView[];
+  eligibleOrders: EligibleOrder[];
+}
 
 function ReturnsView() {
   const params = useSearchParams();
   const { toast } = useToast();
-  const [formOpen, setFormOpen] = useState(!!params.get("order"));
-  const [requests, setRequests] = useState<ReturnRequest[]>(mockReturnRequests);
 
-  const eligible = mockOrders.filter((o) => o.status === "delivered");
+  const [data, setData] = useState<ReturnsPayload | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+
+  const load = async () => {
+    try {
+      setData(await api.get<ReturnsPayload>("/api/v1/account/returns"));
+    } catch (caught) {
+      setLoadError(errorMessage(caught));
+      setData({ requests: [], eligibleOrders: [] });
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  // Open the form straight away when arriving from an order page's button.
+  const requestedOrder = params.get("order");
+  useEffect(() => {
+    if (requestedOrder && data?.eligibleOrders.length) setFormOpen(true);
+  }, [requestedOrder, data]);
+
+  const requests = data?.requests ?? [];
+  const eligible = data?.eligibleOrders ?? [];
 
   return (
     <div className="space-y-5">
@@ -47,7 +128,11 @@ function ReturnsView() {
             درخواست‌های ثبت‌شده و وضعیت رسیدگی به آن‌ها.
           </p>
         </div>
-        <Button onClick={() => setFormOpen(true)} icon={<Plus className="size-4" aria-hidden />} disabled={eligible.length === 0}>
+        <Button
+          onClick={() => setFormOpen(true)}
+          icon={<Plus className="size-4" aria-hidden />}
+          disabled={eligible.length === 0}
+        >
           درخواست جدید
         </Button>
       </header>
@@ -60,12 +145,26 @@ function ReturnsView() {
         </Link>
       </Alert>
 
-      {requests.length === 0 ? (
+      {loadError && <Alert tone="danger" role="alert">{loadError}</Alert>}
+
+      {data === null ? (
+        <div className="space-y-3" role="status" aria-label="در حال بارگذاری درخواست‌ها">
+          {[0, 1].map((i) => <Skeleton key={i} className="h-40 w-full rounded-lg" />)}
+        </div>
+      ) : requests.length === 0 ? (
         <EmptyState
           icon={<RotateCcw className="size-7" aria-hidden />}
           title="درخواست مرجوعی ندارید"
-          description="اگر یکی از خریدهایتان مناسب نبود، از اینجا درخواست تعویض یا مرجوعی ثبت کنید."
-          action={eligible.length > 0 ? <Button onClick={() => setFormOpen(true)}>ثبت درخواست</Button> : <ButtonLink href="/shop">رفتن به فروشگاه</ButtonLink>}
+          description={
+            eligible.length > 0
+              ? "اگر یکی از خریدهایتان مناسب نبود، از اینجا درخواست تعویض یا مرجوعی ثبت کنید."
+              : "سفارش تحویل‌شده‌ای در مهلت مرجوعی ندارید."
+          }
+          action={
+            eligible.length > 0
+              ? <Button onClick={() => setFormOpen(true)}>ثبت درخواست</Button>
+              : <ButtonLink href="/shop">رفتن به فروشگاه</ButtonLink>
+          }
         />
       ) : (
         <ul className="space-y-3">
@@ -80,11 +179,11 @@ function ReturnsView() {
                         {request.orderNumber}
                       </span>
                     </p>
-                    <p className="mt-1 text-xs text-fg-muted">ثبت شده در {formatDate(request.createdAt)}</p>
+                    <p className="tnum mt-1 text-xs text-fg-muted">
+                      <span dir="ltr">{request.number}</span> — ثبت شده در {formatDate(request.createdAt)}
+                    </p>
                   </div>
-                  <Badge tone={TONE_TO_BADGE[RETURN_STATUS_TONE[request.status]]}>
-                    {RETURN_STATUS_LABELS[request.status]}
-                  </Badge>
+                  <Badge tone={TONE_TO_BADGE[request.status] ?? "neutral"}>{request.statusLabel}</Badge>
                 </div>
 
                 <dl className="mt-4 space-y-2 border-t border-border pt-3 text-sm">
@@ -95,7 +194,9 @@ function ReturnsView() {
                   <div className="flex justify-between gap-3">
                     <dt className="text-fg-muted">کالاها</dt>
                     <dd className="tnum text-end text-fg">
-                      {request.items.map((i) => `${i.name} (${i.colorName}، سایز ${toPersianDigits(i.size)})`).join("، ")}
+                      {request.items
+                        .map((i) => `${i.name} (${i.colorName}، سایز ${toPersianDigits(i.size)}) × ${toPersianDigits(i.quantity)}`)
+                        .join("، ")}
                     </dd>
                   </div>
                   {request.refundAmount > 0 && (
@@ -104,7 +205,25 @@ function ReturnsView() {
                       <dd><PriceInline value={request.refundAmount} /></dd>
                     </div>
                   )}
+                  {request.adminNote && (
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-fg-muted">پیام لوران</dt>
+                      <dd className="text-end text-fg">{request.adminNote}</dd>
+                    </div>
+                  )}
                 </dl>
+
+                {/* The real history, from order-side events — not local state. */}
+                {request.timeline.length > 1 && (
+                  <ol className="mt-3 space-y-1.5 border-t border-border pt-3 text-xs text-fg-muted">
+                    {request.timeline.map((entry, index) => (
+                      <li key={`${entry.status}-${index}`} className="flex flex-wrap justify-between gap-2">
+                        <span className="text-fg">{entry.label}{entry.note ? ` — ${entry.note}` : ""}</span>
+                        <span className="tnum">{formatDate(entry.at)}</span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
               </Card>
             </li>
           ))}
@@ -114,11 +233,11 @@ function ReturnsView() {
       <ReturnRequestModal
         open={formOpen}
         onClose={() => setFormOpen(false)}
-        defaultOrder={params.get("order") ?? eligible[0]?.number}
-        orders={eligible.map((o) => ({ number: o.number, label: `${o.number} — ${formatDate(o.createdAt)}` }))}
-        onSubmit={(request) => {
-          setRequests((list) => [request, ...list]);
+        orders={eligible}
+        defaultOrderNumber={requestedOrder ?? undefined}
+        onDone={async () => {
           setFormOpen(false);
+          await load();
           toast({
             tone: "success",
             title: "درخواست شما ثبت شد",
@@ -131,43 +250,82 @@ function ReturnsView() {
 }
 
 function ReturnRequestModal({
-  open, onClose, orders, defaultOrder, onSubmit,
+  open, onClose, orders, defaultOrderNumber, onDone,
 }: {
   open: boolean;
   onClose: () => void;
-  orders: { number: string; label: string }[];
-  defaultOrder?: string;
-  onSubmit: (request: ReturnRequest) => void;
+  orders: EligibleOrder[];
+  defaultOrderNumber?: string;
+  onDone: () => Promise<void> | void;
 }) {
-  const [orderNumber, setOrderNumber] = useState(defaultOrder ?? orders[0]?.number ?? "");
-  const [type, setType] = useState<"return" | "exchange">("exchange");
-  const [reason, setReason] = useState("size");
-  const [note, setNote] = useState("");
-  const [errors, setErrors] = useState<{ note?: string; orderNumber?: string }>({});
-  const [loading, setLoading] = useState(false);
+  const initialOrder =
+    orders.find((o) => o.number === defaultOrderNumber)?.id ?? orders[0]?.id ?? "";
 
-  const submit = async (event: React.FormEvent) => {
+  const [orderId, setOrderId] = useState(initialOrder);
+  const [type, setType] = useState<"return" | "exchange">("exchange");
+  const [reason, setReason] = useState(REASONS[0]);
+  const [note, setNote] = useState("");
+  /** orderItemId → quantity being returned. */
+  const [selection, setSelection] = useState<Record<string, number>>({});
+  const [errors, setErrors] = useState<{ items?: string; note?: string }>({});
+
+  // Reset the picked items whenever the order changes — they belong to it.
+  useEffect(() => {
+    setSelection({});
+    setErrors({});
+  }, [orderId]);
+
+  useEffect(() => {
+    if (open && !orderId) setOrderId(initialOrder);
+  }, [open, orderId, initialOrder]);
+
+  const order = useMemo(() => orders.find((o) => o.id === orderId), [orders, orderId]);
+
+  const refundEstimate = useMemo(() => {
+    if (!order || type !== "return") return 0;
+    return order.items.reduce(
+      (total, item) => total + (selection[item.id] ?? 0) * item.unitPrice,
+      0
+    );
+  }, [order, selection, type]);
+
+  const submit = useAction(
+    async () => {
+      const items = Object.entries(selection)
+        .filter(([, quantity]) => quantity > 0)
+        .map(([orderItemId, quantity]) => ({ orderItemId, quantity }));
+
+      return api.post("/api/v1/account/returns", {
+        orderId,
+        type,
+        reason,
+        customerNote: note.trim() || undefined,
+        items,
+      });
+    },
+    { onSuccess: onDone }
+  );
+
+  const onSubmit = (event: React.FormEvent) => {
     event.preventDefault();
+    const chosen = Object.values(selection).filter((q) => q > 0).length;
     const next: typeof errors = {};
-    if (!orderNumber) next.orderNumber = "سفارش موردنظر را انتخاب کنید.";
-    if (note.trim().length < 10) next.note = "توضیح کوتاهی درباره مشکل بنویسید (حداقل ۱۰ حرف).";
+    if (!chosen) next.items = "حداقل یک کالا را برای مرجوعی انتخاب کنید.";
+    if (note.trim().length > 0 && note.trim().length < 10) {
+      next.note = "توضیح را کمی کامل‌تر بنویسید (حداقل ۱۰ حرف) یا خالی بگذارید.";
+    }
     setErrors(next);
     if (Object.keys(next).length) return;
+    void submit.run();
+  };
 
-    setLoading(true);
-    await new Promise((r) => setTimeout(r, 700));
-    setLoading(false);
-
-    const order = mockOrders.find((o) => o.number === orderNumber)!;
-    onSubmit({
-      id: `rt-${Date.now()}`,
-      orderNumber,
-      createdAt: new Date().toISOString(),
-      status: "requested",
-      reason: REASONS.find((r) => r.value === reason)?.label ?? "دلیل دیگر",
-      items: order.items.map((i) => ({ name: i.name, colorName: i.colorName, size: i.size, quantity: i.quantity })),
-      refundAmount: type === "return" ? order.totals.payableOnline : 0,
-      type,
+  const toggleItem = (item: EligibleItem, checked: boolean) => {
+    setErrors((s) => ({ ...s, items: undefined }));
+    setSelection((current) => {
+      const next = { ...current };
+      if (checked) next[item.id] = 1;
+      else delete next[item.id];
+      return next;
     });
   };
 
@@ -180,21 +338,71 @@ function ReturnRequestModal({
       size="lg"
       footer={
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>انصراف</Button>
-          <Button type="submit" form="return-form" loading={loading}>ثبت درخواست</Button>
+          <Button variant="ghost" onClick={onClose} disabled={submit.pending}>انصراف</Button>
+          <Button type="submit" form="return-form" loading={submit.pending} disabled={submit.pending}>
+            ثبت درخواست
+          </Button>
         </div>
       }
     >
-      <form id="return-form" onSubmit={submit} noValidate className="space-y-4">
+      <form id="return-form" onSubmit={onSubmit} noValidate className="space-y-4" aria-busy={submit.pending}>
         <Select
           label="سفارش موردنظر"
           required
-          value={orderNumber}
-          onChange={(e) => setOrderNumber(e.target.value)}
-          error={errors.orderNumber}
-          options={orders.map((o) => ({ value: o.number, label: o.label }))}
-          placeholder={orders.length ? undefined : "سفارش تحویل‌شده‌ای ندارید"}
+          value={orderId}
+          onChange={(e) => setOrderId(e.target.value)}
+          options={orders.map((o) => ({
+            value: o.id,
+            label: `${o.number} — ${formatDate(o.deliveredAt ?? o.createdAt)}`,
+          }))}
+          placeholder={orders.length ? undefined : "سفارش تحویل‌شده‌ای در مهلت مرجوعی ندارید"}
+          disabled={submit.pending}
         />
+
+        {/* Item-level selection: a customer usually returns one pair, not the
+            whole order. `available` already excludes anything covered by an
+            open request. */}
+        {order && (
+          <fieldset>
+            <legend className="mb-2 text-sm font-medium text-fg">
+              کالاهای این سفارش <span className="text-primary" aria-hidden>*</span>
+            </legend>
+            <ul className="divide-y divide-border rounded-md border border-border">
+              {order.items.map((item) => {
+                const selected = selection[item.id] != null;
+                return (
+                  <li key={item.id} className="flex flex-wrap items-center gap-3 p-3">
+                    <Checkbox
+                      label={`${item.name} — ${item.colorName}، سایز ${toPersianDigits(item.size)}`}
+                      checked={selected}
+                      onChange={(e) => toggleItem(item, e.target.checked)}
+                      disabled={submit.pending}
+                    />
+                    <div className="ms-auto flex items-center gap-3">
+                      {item.available > 1 && selected && (
+                        <QuantityStepper
+                          value={selection[item.id] ?? 1}
+                          min={1}
+                          max={item.available}
+                          onChange={(quantity) =>
+                            setSelection((current) => ({ ...current, [item.id]: quantity }))
+                          }
+                          size="sm"
+                        />
+                      )}
+                      <span className="tnum whitespace-nowrap text-xs text-fg-muted">
+                        {toPersianDigits(item.available)} عدد قابل مرجوع
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+            {errors.items && (
+              <p role="alert" className="mt-1.5 text-sm text-danger">{errors.items}</p>
+            )}
+          </fieldset>
+        )}
 
         <fieldset>
           <legend className="mb-2 text-sm font-medium text-fg">نوع درخواست</legend>
@@ -205,6 +413,7 @@ function ReturnRequestModal({
                 type="button"
                 onClick={() => setType(value)}
                 aria-pressed={type === value}
+                disabled={submit.pending}
                 className={[
                   "flex min-h-12 items-center justify-center rounded-md border px-3 text-sm transition-colors",
                   type === value
@@ -223,19 +432,29 @@ function ReturnRequestModal({
           required
           value={reason}
           onChange={(e) => setReason(e.target.value)}
-          options={REASONS}
+          options={REASONS.map((r) => ({ value: r, label: r }))}
+          disabled={submit.pending}
         />
 
         <Textarea
           label="توضیحات"
-          required
           rows={4}
           value={note}
           onChange={(e) => { setNote(e.target.value); setErrors((s) => ({ ...s, note: undefined })); }}
           error={errors.note}
           hint="هرچه دقیق‌تر بنویسید، رسیدگی سریع‌تر انجام می‌شود."
           placeholder="مثلاً: سایز ۴۲ سفارش دادم ولی کمی تنگ است و سایز ۴۳ می‌خواهم."
+          disabled={submit.pending}
         />
+
+        {type === "return" && refundEstimate > 0 && (
+          <p className="tnum rounded-md bg-surface-2 p-3 text-sm text-fg-muted">
+            مبلغ تقریبی بازگشتی: <PriceInline value={refundEstimate} /> — مبلغ نهایی پس از بررسی
+            کالا توسط لوران تأیید می‌شود.
+          </p>
+        )}
+
+        {submit.error && <Alert tone="danger" role="alert">{submit.error}</Alert>}
 
         <Alert tone="warning">
           کالا باید استفاده‌نشده و همراه جعبه و برچسب اصلی باشد. هزینه ارسال مرجوعی طبق شرایط

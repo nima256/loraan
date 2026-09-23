@@ -1,26 +1,60 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, MapPin, Package, RotateCcw, Truck } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { ButtonLink } from "@/components/ui/Button";
-import { EmptyState } from "@/components/ui/Feedback";
+import { EmptyState, Skeleton } from "@/components/ui/Feedback";
 import { PriceInline } from "@/components/ui/Price";
 import { OrderStatusBadge } from "@/components/account/OrderStatus";
-import { mockOrders, mockReturnRequests } from "@/data/account";
 import { useAuth } from "@/store/AuthProvider";
+import { api } from "@/lib/api/client";
 import { formatDate, toPersianDigits } from "@/lib/format";
+import type { Order } from "@/types";
+
+interface AccountSummary {
+  counts: { orders: number; openOrders: number; addresses: number; returns: number; reviews: number };
+  recentOrders: Order[];
+}
 
 export default function AccountDashboard() {
-  const { user, addresses } = useAuth();
-  const recent = mockOrders.slice(0, 3);
-  const openOrders = mockOrders.filter((o) => ["preparing", "packaged", "shipped"].includes(o.status));
+  const { user } = useAuth();
+  const [summary, setSummary] = useState<AccountSummary | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<AccountSummary>("/api/v1/account/summary")
+      .then((data) => {
+        if (!cancelled) setSummary(data);
+      })
+      .catch(() => {
+        // A dashboard that cannot load its counts still shows the links.
+        if (!cancelled) {
+          setSummary({
+            counts: { orders: 0, openOrders: 0, addresses: 0, returns: 0, reviews: 0 },
+            recentOrders: [],
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const counts = summary?.counts;
+  const recent = summary?.recentOrders ?? [];
+  const openOrders = recent.filter((o) => ["preparing", "packaged", "shipped"].includes(o.status));
+
+  const dash = "—";
+  const stat = (value: number | undefined) => (value == null ? dash : toPersianDigits(value));
 
   const stats = [
-    { label: "سفارش‌های من", value: toPersianDigits(mockOrders.length), href: "/account/orders", icon: Package },
-    { label: "در حال پیگیری", value: toPersianDigits(openOrders.length), href: "/account/orders?status=open", icon: Truck },
-    { label: "آدرس‌های ذخیره‌شده", value: toPersianDigits(addresses.length), href: "/account/addresses", icon: MapPin },
-    { label: "مرجوعی و تعویض", value: toPersianDigits(mockReturnRequests.length), href: "/account/returns", icon: RotateCcw },
+    { label: "سفارش‌های من", value: stat(counts?.orders), href: "/account/orders", icon: Package },
+    { label: "در حال پیگیری", value: stat(counts?.openOrders), href: "/account/orders", icon: Truck },
+    { label: "آدرس‌های ذخیره‌شده", value: stat(counts?.addresses), href: "/account/addresses", icon: MapPin },
+    { label: "مرجوعی و تعویض", value: stat(counts?.returns), href: "/account/returns", icon: RotateCcw },
   ];
 
   return (
@@ -86,7 +120,11 @@ export default function AccountDashboard() {
           </Link>
         </div>
 
-        {recent.length === 0 ? (
+        {summary === null ? (
+          <div className="space-y-2 p-4" role="status" aria-label="در حال بارگذاری سفارش‌ها">
+            {[0, 1, 2].map((i) => <Skeleton key={i} className="h-14 w-full rounded-md" />)}
+          </div>
+        ) : recent.length === 0 ? (
           <EmptyState
             className="border-0"
             icon={<Package className="size-7" aria-hidden />}
