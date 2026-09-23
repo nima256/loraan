@@ -341,8 +341,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 }
 
 /** Drops fields the server adds that the client shape doesn't carry. */
-function stripServerOnly(item: CartItem & { lineTotal?: number }): CartItem {
-  const { lineTotal: _lineTotal, ...rest } = item;
+function stripServerOnly({ lineTotal, ...rest }: CartItem & { lineTotal?: number }): CartItem {
+  void lineTotal;
   return rest;
 }
 

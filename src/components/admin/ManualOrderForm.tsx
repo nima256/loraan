@@ -10,7 +10,6 @@ import { Input, Select, Textarea } from "@/components/ui/Input";
 import { Alert, EmptyState, Skeleton } from "@/components/ui/Feedback";
 import { QuantityStepper } from "@/components/ui/QuantityStepper";
 import { PriceInline } from "@/components/ui/Price";
-import { Badge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
 import { api, query as buildQuery } from "@/lib/api/client";
 import { useAction } from "@/lib/use-action";

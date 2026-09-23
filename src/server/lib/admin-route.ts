@@ -35,8 +35,13 @@ type AdminHandler<Params> = (
   context: AdminContext<Params>
 ) => Promise<Response> | Response;
 
+/**
+ * Next.js types a route handler's second argument as `{ params: Promise<T> }`
+ * and rejects an optional one, so the wrapper matches that exactly and
+ * tolerates a missing value at runtime for routes with no dynamic segment.
+ */
 export function adminRoute<Params = Record<string, never>>(fn: AdminHandler<Params>) {
-  return handler<{ params?: Promise<Params> }>(async (request, routeContext) => {
+  return handler<{ params: Promise<Params> }>(async (request, routeContext) => {
     const admin = await requireAdmin();
     const { ip } = requestContext(request);
     const params = ((await routeContext?.params) ?? {}) as Params;

@@ -2,9 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, ImagePlus, Plus, Save, Trash2, Wand2, X } from "lucide-react";
+import { ArrowRight, Plus, Save, Trash2, Wand2, X } from "lucide-react";
 import { AdminPageHeader } from "@/components/admin/AdminShell";
 import { ImageUploader } from "@/components/admin/ImageUploader";
 import { Card } from "@/components/ui/Card";

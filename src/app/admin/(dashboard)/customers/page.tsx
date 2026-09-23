@@ -1,85 +1,114 @@
-"use client";
-
-import { useMemo, useState } from "react";
-import { Search, UserPlus, Users } from "lucide-react";
+import { Suspense } from "react";
+import Link from "next/link";
 import { AdminPageHeader } from "@/components/admin/AdminShell";
+import {
+  AdminFilterChips,
+  AdminPagination,
+  AdminResultCount,
+  AdminSearch,
+} from "@/components/admin/AdminTableControls";
+import { NewCustomerButton } from "@/components/admin/CustomerForm";
 import { Card, DataTable } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { ButtonLink } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/Feedback";
-import { StatTile } from "@/components/admin/Charts";
 import { PriceInline } from "@/components/ui/Price";
-import { mockCustomers } from "@/data/analytics";
-import { formatCompactPrice, formatDate, formatPhone, toLatinDigits, toPersianDigits } from "@/lib/format";
+import {
+  listAdminCustomers,
+  type AdminCustomerListItem,
+} from "@/server/services/admin-customers";
+import { customerFilterSchema } from "@/server/schemas/admin";
+import { formatDate, formatPhone, toPersianDigits } from "@/lib/format";
 
-type Row = (typeof mockCustomers)[number];
+/** Admin customers — server-side paginated and searchable. */
 
-export default function AdminCustomersPage() {
-  const [query, setQuery] = useState("");
+export const dynamic = "force-dynamic";
 
-  const filtered = useMemo(() => {
-    const term = toLatinDigits(query).trim().toLowerCase();
-    if (!term) return mockCustomers;
-    return mockCustomers.filter(
-      (c) => c.name.includes(query.trim()) || c.phone.includes(term) || c.city.includes(query.trim())
-    );
-  }, [query]);
+export default async function AdminCustomersPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const raw = await searchParams;
+  const flat: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === "string") flat[key] = value;
+  }
 
-  const totalSpent = mockCustomers.reduce((n, c) => n + c.spent, 0);
-  const repeat = mockCustomers.filter((c) => c.orders > 1).length;
+  const filters = customerFilterSchema.parse(flat);
+  const result = await listAdminCustomers(filters);
 
   return (
     <>
       <AdminPageHeader
         title="مشتریان"
-        description={`${toPersianDigits(mockCustomers.length)} مشتری ثبت‌شده`}
-        actions={<Button variant="secondary" icon={<UserPlus className="size-4" aria-hidden />}>افزودن دستی</Button>}
+        description={`${toPersianDigits(result.total)} مشتری`}
+        actions={<NewCustomerButton />}
       />
 
-      <div className="mb-5 grid gap-3 sm:grid-cols-3">
-        <StatTile label="کل مشتریان" value={toPersianDigits(mockCustomers.length)} icon={<Users className="size-4" aria-hidden />} />
-        <StatTile label="مشتریان تکرارشونده" value={toPersianDigits(repeat)} hint={`${toPersianDigits(Math.round((repeat / mockCustomers.length) * 100))}٪ از کل`} />
-        <StatTile label="مجموع خرید" value={formatCompactPrice(totalSpent)} />
-      </div>
-
-      <Card className="mb-4">
-        <div className="relative">
-          <Search className="pointer-events-none absolute inset-y-0 start-3 my-auto size-4 text-fg-subtle" aria-hidden />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="نام، شماره موبایل یا شهر"
-            aria-label="جست‌وجوی مشتری"
-            className="h-11 w-full rounded-md border border-border-strong bg-surface px-3 ps-10 text-sm
-                       focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/25"
+      <Card className="mb-4 space-y-3">
+        <Suspense fallback={<div className="skeleton h-11 rounded-md" />}>
+          <AdminSearch placeholder="نام، شماره موبایل یا ایمیل" />
+        </Suspense>
+        <Suspense fallback={null}>
+          <AdminFilterChips
+            param="status"
+            options={[
+              { value: "", label: "همه" },
+              { value: "active", label: "فعال" },
+              { value: "blocked", label: "مسدود" },
+            ]}
           />
-        </div>
+        </Suspense>
+        <Suspense fallback={null}>
+          <AdminFilterChips
+            param="sort"
+            options={[
+              { value: "", label: "جدیدترین" },
+              { value: "orders", label: "بیشترین سفارش" },
+              { value: "spend", label: "بیشترین خرید" },
+            ]}
+          />
+        </Suspense>
       </Card>
 
-      <DataTable<Row>
-        rows={filtered}
-        getKey={(row) => row.id}
+      <div className="mb-3">
+        <AdminResultCount
+          page={result.page}
+          pageSize={result.pageSize}
+          total={result.total}
+          noun="مشتری"
+        />
+      </div>
+
+      <DataTable<AdminCustomerListItem>
+        rows={result.items}
+        getKey={(customer) => customer.id}
         empty={
           <EmptyState
-            title="مشتری‌ای پیدا نشد"
-            description="عبارت جست‌وجو را تغییر دهید."
-            action={<Button variant="secondary" onClick={() => setQuery("")}>نمایش همه</Button>}
+            title="مشتری‌ای با این فیلترها نیست"
+            description="عبارت جست‌وجو را تغییر دهید یا مشتری تازه‌ای ثبت کنید."
+            action={<ButtonLink href="/admin/customers" variant="secondary">نمایش همه مشتریان</ButtonLink>}
           />
         }
-        renderCard={(row) => (
+        renderCard={(customer) => (
           <Card>
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="font-medium text-fg">{row.name}</p>
-                <p className="tnum mt-1 text-xs text-fg-muted" dir="ltr">{formatPhone(row.phone)}</p>
-                <p className="mt-0.5 text-xs text-fg-subtle">{row.city}</p>
+                <Link href={`/admin/customers/${customer.id}`} className="font-medium text-fg hover:text-primary dark:hover:text-[color:var(--primary-soft-fg)]">
+                  {customer.fullName}
+                </Link>
+                <p className="tnum mt-1 text-xs text-fg-muted" dir="ltr">
+                  {formatPhone(customer.phone)}
+                </p>
               </div>
-              {row.orders > 1 && <Badge tone="brand" size="sm">مشتری وفادار</Badge>}
+              {customer.blocked && <Badge tone="danger" size="sm">مسدود</Badge>}
             </div>
-            <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3 text-xs">
-              <span className="tnum text-fg-muted">{toPersianDigits(row.orders)} سفارش</span>
-              <PriceInline value={row.spent} className="text-sm" />
+            <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
+              <span className="tnum text-xs text-fg-muted">
+                {toPersianDigits(customer.orderCount)} سفارش
+              </span>
+              <PriceInline value={customer.totalSpent} className="text-sm" />
             </div>
           </Card>
         )}
@@ -87,30 +116,83 @@ export default function AdminCustomersPage() {
           {
             key: "name",
             header: "مشتری",
-            cell: (row) => (
-              <div className="flex items-center gap-2.5">
-                <span className="grid size-9 shrink-0 place-items-center rounded-full bg-surface-3 text-sm font-bold text-fg-muted">
-                  {row.name.charAt(0)}
-                </span>
-                <span className="font-medium text-fg">{row.name}</span>
+            cell: (customer) => (
+              <div className="min-w-0">
+                <Link href={`/admin/customers/${customer.id}`} className="font-medium text-fg hover:text-primary dark:hover:text-[color:var(--primary-soft-fg)]">
+                  {customer.fullName}
+                </Link>
+                {customer.createdByAdmin && (
+                  <Badge tone="neutral" size="sm" className="ms-2">ثبت دستی</Badge>
+                )}
               </div>
             ),
           },
-          { key: "phone", header: "موبایل", cell: (row) => <span className="tnum text-fg-muted" dir="ltr">{formatPhone(row.phone)}</span> },
-          { key: "city", header: "شهر", cell: (row) => <span className="text-fg-muted">{row.city}</span> },
-          { key: "orders", header: "سفارش‌ها", align: "center", cell: (row) => <span className="tnum text-fg">{toPersianDigits(row.orders)}</span> },
-          { key: "spent", header: "مجموع خرید", align: "end", cell: (row) => <PriceInline value={row.spent} className="text-sm" /> },
-          { key: "joined", header: "عضویت", hideOn: "md", cell: (row) => <span className="text-fg-muted">{formatDate(row.joinedAt)}</span> },
           {
-            key: "tag",
+            key: "phone",
+            header: "موبایل",
+            cell: (customer) => (
+              <span className="tnum text-fg-muted" dir="ltr">{formatPhone(customer.phone)}</span>
+            ),
+          },
+          {
+            key: "email",
+            header: "ایمیل",
+            hideOn: "md",
+            cell: (customer) => (
+              <span className="text-fg-muted" dir="ltr">{customer.email ?? "—"}</span>
+            ),
+          },
+          {
+            key: "orders",
+            header: "سفارش‌ها",
+            align: "center",
+            cell: (customer) => (
+              <span className="tnum text-fg-muted">{toPersianDigits(customer.orderCount)}</span>
+            ),
+          },
+          {
+            key: "spent",
+            header: "مجموع خرید",
+            align: "end",
+            cell: (customer) => <PriceInline value={customer.totalSpent} className="text-sm" />,
+          },
+          {
+            key: "joined",
+            header: "عضویت",
+            hideOn: "md",
+            cell: (customer) => (
+              <span className="text-fg-muted">{formatDate(customer.createdAt)}</span>
+            ),
+          },
+          {
+            key: "status",
             header: "وضعیت",
-            cell: (row) =>
-              row.orders > 3 ? <Badge tone="brand" size="sm">مشتری وفادار</Badge>
-              : row.orders > 1 ? <Badge tone="info" size="sm">تکرارشونده</Badge>
-              : <Badge tone="neutral" size="sm">جدید</Badge>,
+            cell: (customer) =>
+              customer.blocked ? (
+                <Badge tone="danger" size="sm">مسدود</Badge>
+              ) : (
+                <Badge tone="success" size="sm">فعال</Badge>
+              ),
+          },
+          {
+            key: "actions",
+            header: "عملیات",
+            align: "end",
+            cell: (customer) => (
+              <Link
+                href={`/admin/customers/${customer.id}`}
+                className="inline-flex h-9 items-center rounded-md border border-border px-2.5 text-xs text-fg-muted hover:text-fg"
+              >
+                مشاهده
+              </Link>
+            ),
           },
         ]}
       />
+
+      <Suspense fallback={null}>
+        <AdminPagination page={result.page} totalPages={result.totalPages} className="mt-6" />
+      </Suspense>
     </>
   );
 }

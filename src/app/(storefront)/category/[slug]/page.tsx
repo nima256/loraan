@@ -12,10 +12,8 @@ import {
 import { parseFilters, type RawParams } from "@/lib/shop-params";
 import { applyContext, categoryContext } from "@/lib/shop-context";
 
-export async function generateStaticParams() {
-  const categories = await listCategories();
-  return categories.map((c) => ({ slug: c.slug }));
-}
+/** Rendered on demand — the listing reflects live stock and prices. */
+export const dynamic = "force-dynamic";
 
 export async function generateMetadata({
   params,

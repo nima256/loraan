@@ -7,16 +7,21 @@ import { ProductPurchase } from "@/components/product/ProductPurchase";
 import { Reviews } from "@/components/product/Reviews";
 import { ProductRail } from "@/components/product/ProductCard";
 import {
-  getAllProductSlugs, getProduct, getRelatedProducts, listCategories,
+  getProduct, getRelatedProducts, listCategories,
 } from "@/server/services/catalog";
 import { getProductReviews, getRatingBreakdown } from "@/server/services/reviews";
 import { siteConfig } from "@/lib/site-config";
 import { toPersianDigits } from "@/lib/format";
 
-export async function generateStaticParams() {
-  const slugs = await getAllProductSlugs();
-  return slugs.map((slug) => ({ slug }));
-}
+/**
+ * Rendered on demand, never prerendered.
+ *
+ * Stock and price change constantly; a statically generated product page would
+ * happily show a sold-out size as available until the next deploy. It also
+ * keeps `next build` from needing a reachable database, which matters because
+ * the build runs on the operator's machine rather than in production.
+ */
+export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;

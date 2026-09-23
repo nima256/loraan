@@ -1,4 +1,4 @@
-import { handler, created, readJson, requestContext } from "@/server/lib/http";
+import { handler, created, readJson } from "@/server/lib/http";
 import { requireCustomer } from "@/server/lib/session";
 import { prisma } from "@/server/lib/prisma";
 import { badRequest, forbidden, notFound, outOfStock } from "@/server/lib/errors";
@@ -30,7 +30,6 @@ import { checkoutSchema } from "@/server/schemas/checkout";
  */
 export const POST = handler(async (request) => {
   const customer = await requireCustomer();
-  const { ip } = requestContext(request);
   const payload = await readJson(request, checkoutSchema);
 
   await enforceRateLimit(RATE_LIMITS.checkoutCustomer, customer.id);

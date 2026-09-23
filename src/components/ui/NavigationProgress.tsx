@@ -62,7 +62,6 @@ export function NavigationProgress() {
         setProgress(0);
       }, DONE_HOLD_MS)
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentRoute]);
 
   /* --- A navigation started: begin the bar. ---------------------------- */

@@ -1,4 +1,3 @@
-import { z } from "zod";
 import { created, ok } from "@/server/lib/http";
 import { adminBody, adminRoute } from "@/server/lib/admin-route";
 import { createProduct, listAdminProducts } from "@/server/services/admin-products";
