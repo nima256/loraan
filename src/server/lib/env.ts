@@ -72,7 +72,15 @@ function load() {
   const value = parsed.data;
   const isProduction = value.NODE_ENV === "production";
 
-  if (isProduction) {
+  // `next build` runs with NODE_ENV=production but on a build machine that has
+  // no reason to hold production secrets — a CI runner, or the operator's
+  // laptop. Enforcing the production requirements there would make the app
+  // impossible to build without handing the builder the live credentials. The
+  // checks below therefore run when the server actually *starts*, which is the
+  // moment that matters.
+  const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build";
+
+  if (isProduction && !isBuildPhase) {
     const missing: string[] = [];
     if (value.SESSION_SECRET.length < 32) missing.push("SESSION_SECRET (حداقل ۳۲ کاراکتر)");
     if (value.OTP_SECRET.length < 32) missing.push("OTP_SECRET (حداقل ۳۲ کاراکتر)");

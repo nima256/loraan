@@ -1,7 +1,7 @@
 import { handler, ok, readJson } from "@/server/lib/http";
 import { requireCustomer } from "@/server/lib/session";
 import { deleteAddress, listAddresses, updateAddress } from "@/server/services/customers";
-import { addressSchema } from "../route";
+import { addressSchema } from "@/server/schemas/account";
 
 /** PATCH / DELETE /api/v1/account/addresses/[id] */
 

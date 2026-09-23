@@ -5,13 +5,15 @@ import { ChevronLeft, LogOut, Phone, User } from "lucide-react";
 import { Drawer } from "@/components/ui/Overlay";
 import { Logo } from "./Logo";
 import { ThemeSegmented } from "./ThemeToggle";
-import { categoryNav, genderNav, mainNav } from "@/lib/navigation";
+import { genderNav, mainNav } from "@/lib/navigation";
+import { useCatalog } from "@/store/CatalogProvider";
 import { useAuth } from "@/store/AuthProvider";
 import { siteConfig } from "@/lib/site-config";
 
 /** Mobile navigation drawer — opens from the inline-start (right) edge in RTL. */
 export function MobileMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { isAuthenticated, user, logout } = useAuth();
+  const { categoryLinks } = useCatalog();
 
   const Item = ({ href, children }: { href: string; children: React.ReactNode }) => (
     <Link
@@ -61,7 +63,7 @@ export function MobileMenu({ open, onClose }: { open: boolean; onClose: () => vo
         <nav aria-label="دسته‌بندی‌ها">
           <h3 className="mb-1 px-3 text-xs font-semibold text-fg-subtle">دسته‌بندی‌ها</h3>
           <div className="flex flex-col">
-            {categoryNav.map((c) => <Item key={c.href} href={c.href}>{c.label}</Item>)}
+            {categoryLinks.map((c) => <Item key={c.href} href={c.href}>{c.label}</Item>)}
           </div>
         </nav>
 

@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Alert } from "@/components/ui/Feedback";
 import { categories } from "@/data/catalog";
-import { getCategoryCounts } from "@/lib/api/products";
+import { getCategoryCounts } from "@/server/services/catalog";
 import { allSizes } from "@/data/commerce";
 import { toPersianDigits } from "@/lib/format";
 

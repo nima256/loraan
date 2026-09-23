@@ -1,4 +1,16 @@
-import { categories } from "@/data/catalog";
+import type { Category } from "@/types";
+
+/**
+ * Site navigation.
+ *
+ * Everything here is static link vocabulary. Category links are the one
+ * exception — they come from the database, so `categoryNav()` takes the
+ * categories the server already loaded rather than importing them.
+ *
+ * That indirection is deliberate: this module is imported by the header and
+ * footer, which are client components. Importing the catalogue here previously
+ * shipped the entire product catalogue into every storefront page's bundle.
+ */
 
 /** Primary header links. Kept short deliberately — five items maximum. */
 export const mainNav = [
@@ -17,12 +29,22 @@ export const genderNav = [
   { label: "بچگانه", href: "/shop?gender=kids" },
 ];
 
-export const categoryNav = categories.map((c) => ({
-  label: c.name,
-  href: `/category/${c.slug}`,
-  slug: c.slug,
-  description: c.description,
-}));
+export interface CategoryNavItem {
+  label: string;
+  href: string;
+  slug: string;
+  description?: string;
+}
+
+/** Builds the category menu from categories loaded server-side. */
+export function categoryNav(categories: Category[]): CategoryNavItem[] {
+  return categories.map((c) => ({
+    label: c.name,
+    href: `/category/${c.slug}`,
+    slug: c.slug,
+    description: c.description,
+  }));
+}
 
 /** Footer columns. Every link here resolves to a real page. */
 export const footerNav = [

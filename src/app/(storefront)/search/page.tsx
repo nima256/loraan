@@ -3,8 +3,8 @@ import { SearchX } from "lucide-react";
 import { ShopView } from "@/components/shop/ShopView";
 import { EmptyState } from "@/components/ui/Feedback";
 import { ButtonLink } from "@/components/ui/Button";
-import { brands, categories } from "@/data/catalog";
-import { getFacets, POPULAR_SEARCHES, searchProducts } from "@/lib/api/products";
+import { getFacets, listBrands, listCategories, searchProducts } from "@/server/services/catalog";
+import { POPULAR_SEARCHES } from "@/lib/catalog-constants";
 import { parseFilters, type RawParams } from "@/lib/shop-params";
 
 export const metadata: Metadata = { title: "نتیجه جست‌وجو", robots: { index: false } };
@@ -13,7 +13,6 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
   const params = await searchParams;
   const filters = parseFilters(params);
   const query = filters.q ?? "";
-  const result = await searchProducts(filters);
 
   if (!query.trim()) {
     return (
@@ -35,11 +34,18 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
     );
   }
 
+  const [result, facets, categories, brands] = await Promise.all([
+    searchProducts(filters),
+    getFacets(),
+    listCategories(),
+    listBrands(),
+  ]);
+
   return (
     <ShopView
       result={result}
       filters={filters}
-      facets={getFacets()}
+      facets={facets}
       categories={categories}
       brands={brands}
       basePath="/search"

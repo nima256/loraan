@@ -5,7 +5,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Clock, Search, TrendingUp, X } from "lucide-react";
-import { getSearchSuggestions, POPULAR_SEARCHES } from "@/lib/api/products";
+import { POPULAR_SEARCHES } from "@/lib/catalog-constants";
+// `query` is aliased: the component already has a `query` state variable.
+import { api, query as buildQuery } from "@/lib/api/client";
 import { formatAmount } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { ProductSummary } from "@/types";
@@ -64,17 +66,33 @@ export function SearchOverlay({ open, onClose }: { open: boolean; onClose: () =>
 
   // Debounced suggestions — 200ms is fast enough to feel instant while typing.
   useEffect(() => {
-    if (!query.trim()) {
+    const term = query.trim();
+    if (!term) {
       setResults([]);
       setLoading(false);
       return;
     }
     setLoading(true);
+    const controller = new AbortController();
     const id = setTimeout(async () => {
-      setResults(await getSearchSuggestions(query, 6));
-      setLoading(false);
+      try {
+        const data = await api.get<{ items: ProductSummary[] }>(
+          `/api/v1/products/suggestions${buildQuery({ q: term, limit: 6 })}`,
+          { signal: controller.signal }
+        );
+        setResults(data.items);
+      } catch (error) {
+        // An aborted request is the expected outcome of typing another key.
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setResults([]);
+      } finally {
+        setLoading(false);
+      }
     }, 200);
-    return () => clearTimeout(id);
+    return () => {
+      clearTimeout(id);
+      controller.abort();
+    };
   }, [query]);
 
   const submit = (term: string) => {

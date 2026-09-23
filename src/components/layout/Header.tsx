@@ -9,7 +9,8 @@ import { ThemeToggle } from "./ThemeToggle";
 import { SearchOverlay } from "./SearchOverlay";
 import { MobileMenu } from "./MobileMenu";
 import { MiniCart } from "./MiniCart";
-import { categoryNav, genderNav, mainNav } from "@/lib/navigation";
+import { genderNav, mainNav } from "@/lib/navigation";
+import { useCatalog } from "@/store/CatalogProvider";
 import { useCart } from "@/store/CartProvider";
 import { useAuth } from "@/store/AuthProvider";
 import { toPersianDigits } from "@/lib/format";
@@ -26,6 +27,7 @@ import { cn } from "@/lib/utils";
  */
 export function Header() {
   const pathname = usePathname();
+  const { categoryLinks } = useCatalog();
   const { count, setMiniCartOpen, hydrating } = useCart();
   const { isAuthenticated } = useAuth();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -151,7 +153,7 @@ export function Header() {
                     style={{ zIndex: "var(--z-header)" }}
                   >
                     <div className="grid grid-cols-2 gap-1">
-                      {categoryNav.map((c) => (
+                      {categoryLinks.map((c) => (
                         <Link key={c.href} href={c.href} className="rounded-md p-3 transition-colors hover:bg-surface-2">
                           <span className="block text-sm font-medium text-fg">{c.label}</span>
                           <span className="mt-0.5 block line-clamp-1 text-xs text-fg-subtle">{c.description}</span>

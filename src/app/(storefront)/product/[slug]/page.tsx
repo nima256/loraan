@@ -6,15 +6,16 @@ import { SectionHeader } from "@/components/ui/Card";
 import { ProductPurchase } from "@/components/product/ProductPurchase";
 import { Reviews } from "@/components/product/Reviews";
 import { ProductRail } from "@/components/product/ProductCard";
-import { categoryById } from "@/data/catalog";
 import {
-  getAllProductSlugs, getProduct, getProductReviews, getRatingBreakdown, getRelatedProducts,
-} from "@/lib/api/products";
+  getAllProductSlugs, getProduct, getRelatedProducts, listCategories,
+} from "@/server/services/catalog";
+import { getProductReviews, getRatingBreakdown } from "@/server/services/reviews";
 import { siteConfig } from "@/lib/site-config";
 import { toPersianDigits } from "@/lib/format";
 
 export async function generateStaticParams() {
-  return getAllProductSlugs().map((slug) => ({ slug }));
+  const slugs = await getAllProductSlugs();
+  return slugs.map((slug) => ({ slug }));
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
@@ -35,12 +36,13 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
   const product = await getProduct(decodeURIComponent(slug));
   if (!product) notFound();
 
-  const [reviews, related] = await Promise.all([
+  const [reviews, related, breakdown, categories] = await Promise.all([
     getProductReviews(product.id),
     getRelatedProducts(product, 8),
+    getRatingBreakdown(product.id, product.rating),
+    listCategories(),
   ]);
-  const breakdown = getRatingBreakdown(product.id, product.rating);
-  const category = categoryById.get(product.categoryIds[0]);
+  const category = categories.find((c) => c.id === product.categoryIds[0]);
 
   return (
     <div className="container-page py-5 lg:py-8">

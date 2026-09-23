@@ -5,8 +5,9 @@ import { ValueProps } from "@/components/home/ValueProps";
 import { ProductGrid, ProductRail } from "@/components/product/ProductCard";
 import { SectionHeader } from "@/components/ui/Card";
 import { ButtonLink } from "@/components/ui/Button";
-import { categories } from "@/data/catalog";
-import { getBestSellers, getCategoryCounts, getNewArrivals, getOnSale } from "@/lib/api/products";
+import {
+  getBestSellers, getCategoryCounts, getNewArrivals, getOnSale, listCategories,
+} from "@/server/services/catalog";
 import { toPersianDigits } from "@/lib/format";
 
 /** Representative image per category, reusing the product artwork. */
@@ -22,12 +23,13 @@ const CATEGORY_IMAGES: Record<string, string> = {
 };
 
 export default async function HomePage() {
-  const [bestSellers, onSale, newArrivals] = await Promise.all([
+  const [bestSellers, onSale, newArrivals, categories, counts] = await Promise.all([
     getBestSellers(8),
     getOnSale(8),
     getNewArrivals(4),
+    listCategories(),
+    getCategoryCounts(),
   ]);
-  const counts = getCategoryCounts();
 
   const seeAll = (href: string, label = "مشاهده همه") => (
     <ButtonLink href={href} variant="link" size="sm" iconEnd={<ArrowLeft className="size-4" aria-hidden />}>

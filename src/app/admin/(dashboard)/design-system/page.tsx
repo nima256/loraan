@@ -17,7 +17,7 @@ import { RatingSummary, StarPicker, Stars } from "@/components/ui/Rating";
 import { useToast } from "@/components/ui/Toast";
 import { ThemeSegmented } from "@/components/layout/ThemeToggle";
 import { ProductCard } from "@/components/product/ProductCard";
-import { toSummary } from "@/lib/api/products";
+import { toSummary } from "@/server/services/catalog";
 import { products } from "@/data/catalog";
 
 /**

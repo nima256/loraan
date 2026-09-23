@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import { Check } from "lucide-react";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Button } from "@/components/ui/Button";
 import { Accordion } from "@/components/ui/Navigation";
 import { formatAmount, toPersianDigits } from "@/lib/format";
 import { GENDER_LABELS } from "@/lib/shop-params";
+import type { ShopContext } from "@/lib/shop-context";
 import { cn } from "@/lib/utils";
 import type { Gender, ProductFilters } from "@/types";
 import type { Brand, Category } from "@/types";
@@ -23,9 +26,18 @@ export interface FacetData {
  *
  * Changes are applied through `onChange` — the parent decides whether that
  * means an immediate URL push (desktop) or a staged "apply" (mobile sheet).
+ *
+ * `context` marks a filter the *route* imposes. Two things change when it is
+ * set, both to stop a route constraint masquerading as a broken control:
+ *
+ *  - On a category route the category checkboxes become links. Ticking a box
+ *    that the path already forces would do nothing, and unticking it would
+ *    contradict the URL; choosing a different category is a navigation.
+ *  - On `/sale` the "discounted only" toggle is withdrawn, because the route
+ *    already guarantees it. The locked pill above says so.
  */
 export function FilterPanel({
-  filters, facets, categories, brands, onChange, className,
+  filters, facets, categories, brands, onChange, className, context, buildCategoryHref,
 }: {
   filters: ProductFilters;
   facets: FacetData;
@@ -33,7 +45,12 @@ export function FilterPanel({
   brands: Brand[];
   onChange: (next: ProductFilters) => void;
   className?: string;
+  context?: ShopContext;
+  /** Required when `context.kind === "category"` — see above. */
+  buildCategoryHref?: (slug: string) => string;
 }) {
+  const categoryLocked = context?.kind === "category";
+  const saleLocked = context?.kind === "sale";
   const [minPrice, setMinPrice] = useState(filters.minPrice?.toString() ?? "");
   const [maxPrice, setMaxPrice] = useState(filters.maxPrice?.toString() ?? "");
 
@@ -72,11 +89,15 @@ export function FilterPanel({
           checked={!!filters.inStockOnly}
           onChange={(e) => onChange({ ...filters, inStockOnly: e.target.checked, page: 1 })}
         />
-        <Checkbox
-          label="فقط تخفیف‌دارها"
-          checked={!!filters.onSaleOnly}
-          onChange={(e) => onChange({ ...filters, onSaleOnly: e.target.checked, page: 1 })}
-        />
+        {/* On /sale the route already guarantees this, so showing it as an
+            editable toggle would be a control that cannot be turned off. */}
+        {!saleLocked && (
+          <Checkbox
+            label="فقط تخفیف‌دارها"
+            checked={!!filters.onSaleOnly}
+            onChange={(e) => onChange({ ...filters, onSaleOnly: e.target.checked, page: 1 })}
+          />
+        )}
       </div>
 
       <Accordion
@@ -84,8 +105,34 @@ export function FilterPanel({
         items={[
           {
             id: "category",
-            title: "دسته‌بندی",
-            content: (
+            title: categoryLocked ? "رفتن به دسته‌بندی دیگر" : "دسته‌بندی",
+            content: categoryLocked ? (
+              <div className="-my-0.5">
+                {categories.map((category) => {
+                  const current = category.slug === context?.value;
+                  return (
+                    <Link
+                      key={category.id}
+                      href={current ? "#" : buildCategoryHref?.(category.slug) ?? `/category/${category.slug}`}
+                      aria-current={current ? "page" : undefined}
+                      // The category already in force is inert rather than a
+                      // link back to the page the customer is already on.
+                      aria-disabled={current || undefined}
+                      onClick={current ? (e) => e.preventDefault() : undefined}
+                      className={cn(
+                        "flex min-h-11 items-center justify-between gap-2 rounded-md px-2 text-sm transition-colors",
+                        current
+                          ? "cursor-default bg-primary-soft font-medium text-fg"
+                          : "text-fg-muted hover:bg-surface-2 hover:text-fg"
+                      )}
+                    >
+                      <span className="truncate">{category.name}</span>
+                      {current && <Check className="size-4 shrink-0 text-primary-soft-fg" aria-hidden />}
+                    </Link>
+                  );
+                })}
+              </div>
+            ) : (
               <div className="-my-1">
                 {categories.map((category) => (
                   <Checkbox

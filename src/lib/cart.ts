@@ -1,10 +1,16 @@
-import { coupons } from "@/data/commerce";
-import { shippingMethods } from "@/data/commerce";
-import type { CartItem, Coupon, OrderTotals, ShippingMethodId } from "@/types";
+import type { CartItem, OrderTotals, ShippingMethod } from "@/types";
 
 /**
- * All cart money maths lives here so the cart page, the mini-cart, the checkout
- * summary and the invoice can never disagree about a number.
+ * Client-side cart arithmetic.
+ *
+ * These are display helpers only. The authoritative totals — the ones an order
+ * is created from — are computed by the server in
+ * `src/server/services/cart.ts`, and the cart page replaces anything here with
+ * the server's figures as soon as the validation response arrives.
+ *
+ * What remains is the optimistic maths that keeps the mini-cart and the
+ * quantity stepper responsive between server round-trips. It deliberately knows
+ * nothing about coupons: a coupon discount is never calculated in the browser.
  */
 
 export function lineTotal(item: CartItem): number {
@@ -19,63 +25,46 @@ export function itemCount(items: CartItem[]): number {
   return items.reduce((n, i) => n + i.quantity, 0);
 }
 
-export function findCoupon(code: string): Coupon | undefined {
-  return coupons.find((c) => c.code.toLowerCase() === code.trim().toLowerCase());
-}
-
-export type CouponValidation =
-  | { ok: true; coupon: Coupon; discount: number }
-  | { ok: false; message: string };
-
-export function validateCoupon(code: string, subtotal: number): CouponValidation {
-  const coupon = findCoupon(code);
-  if (!coupon) return { ok: false, message: "کد تخفیف نامعتبر است. املای آن را بررسی کنید." };
-
-  if (coupon.expiresAt && new Date(coupon.expiresAt) < new Date()) {
-    return { ok: false, message: "اعتبار این کد تخفیف به پایان رسیده است." };
-  }
-  if (coupon.minSubtotal && subtotal < coupon.minSubtotal) {
-    return {
-      ok: false,
-      message: `این کد برای سفارش‌های بالای ${coupon.minSubtotal.toLocaleString("fa-IR")} تومان فعال می‌شود.`,
-    };
-  }
-  return { ok: true, coupon, discount: couponDiscount(coupon, subtotal) };
-}
-
-export function couponDiscount(coupon: Coupon, subtotal: number): number {
-  if (coupon.type === "fixed") return Math.min(coupon.value, subtotal);
-  const raw = Math.round((subtotal * coupon.value) / 100);
-  return Math.min(raw, coupon.maxDiscount ?? raw, subtotal);
+export function subtotalOf(items: CartItem[]): number {
+  return items.reduce((n, i) => n + lineTotal(i), 0);
 }
 
 /**
- * `shippingCost` is reported separately and is **excluded** from `payableOnline`
- * whenever the courier collects it on delivery (Tipax today). `grandTotal` is
- * what the customer ends up spending in total, online plus at the door.
+ * An optimistic total for the moments before the server answers.
+ *
+ * `couponDiscount` is whatever the server last told us — it is carried, never
+ * recomputed, because the browser has no business deciding it.
  */
-export function calculateTotals(
+export function optimisticTotals(
   items: CartItem[],
-  options: { coupon?: Coupon | null; shippingMethodId?: ShippingMethodId } = {}
+  options: { couponDiscount?: number; shipping?: Pick<ShippingMethod, "cost" | "paidOnDelivery"> } = {}
 ): OrderTotals {
-  const subtotal = items.reduce((n, i) => n + lineTotal(i), 0);
+  const subtotal = subtotalOf(items);
   const compareSubtotal = items.reduce((n, i) => n + lineCompareTotal(i), 0);
-  const productDiscount = compareSubtotal - subtotal;
+  const couponDiscount = Math.min(options.couponDiscount ?? 0, subtotal);
+  const afterCoupon = Math.max(0, subtotal - couponDiscount);
 
-  const method =
-    shippingMethods.find((m) => m.id === options.shippingMethodId) ?? shippingMethods[0];
-  const shippingCost = method.cost;
-  const couponDiscountValue = options.coupon ? couponDiscount(options.coupon, subtotal) : 0;
-
-  const afterCoupon = Math.max(0, subtotal - couponDiscountValue);
-  const payableOnline = method.paidOnDelivery ? afterCoupon : afterCoupon + shippingCost;
+  const shippingCost = options.shipping?.cost ?? 0;
+  const paidOnDelivery = options.shipping?.paidOnDelivery ?? true;
 
   return {
     subtotal,
-    productDiscount,
-    couponDiscount: couponDiscountValue,
+    productDiscount: compareSubtotal - subtotal,
+    couponDiscount,
     shippingCost,
-    payableOnline,
+    // Postpaid shipping is collected by the courier, so it stays out of the
+    // amount charged online.
+    payableOnline: paidOnDelivery ? afterCoupon : afterCoupon + shippingCost,
     grandTotal: afterCoupon + shippingCost,
   };
 }
+
+/** The empty-cart totals, used before hydration and after clearing. */
+export const EMPTY_TOTALS: OrderTotals = {
+  subtotal: 0,
+  productDiscount: 0,
+  couponDiscount: 0,
+  shippingCost: 0,
+  payableOnline: 0,
+  grandTotal: 0,
+};

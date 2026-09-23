@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useMemo, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { PackageSearch, SlidersHorizontal } from "lucide-react";
+import { ArrowLeft, Lock, PackageSearch, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { FilterChip } from "@/components/ui/Badge";
 import { BottomSheet } from "@/components/ui/Overlay";
@@ -11,8 +12,10 @@ import { Pagination } from "@/components/ui/Navigation";
 import { ProductGrid } from "@/components/product/ProductCard";
 import { FilterPanel, type FacetData } from "./FilterPanel";
 import { buildQuery, countActiveFilters, GENDER_LABELS, hasActiveFilters } from "@/lib/shop-params";
-import { SORT_OPTIONS } from "@/lib/api/products";
+import { stripContext, type ShopContext } from "@/lib/shop-context";
+import { SORT_OPTIONS } from "@/lib/catalog-constants";
 import { formatAmount, toPersianDigits } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import type { Brand, Category, Gender, PaginatedResult, ProductFilters, ProductSummary, SortKey } from "@/types";
 
 /**
@@ -22,9 +25,14 @@ import type { Brand, Category, Gender, PaginatedResult, ProductFilters, ProductS
  * component owns the controls and the pending state. On phones the filters live
  * in a bottom sheet with a staged "apply" so the list doesn't reshuffle under
  * the user's finger while they are still choosing.
+ *
+ * `context` is set on routes that impose a filter of their own — `/category/*`
+ * and `/sale`. That constraint is rendered as a locked pill and kept out of the
+ * query string, so the path and the query can never contradict each other. See
+ * `lib/shop-context`.
  */
 export function ShopView({
-  result, filters, facets, categories, brands, basePath = "/shop", heading, description,
+  result, filters, facets, categories, brands, basePath = "/shop", heading, description, context,
 }: {
   result: PaginatedResult<ProductSummary>;
   filters: ProductFilters;
@@ -34,68 +42,122 @@ export function ShopView({
   basePath?: string;
   heading: string;
   description?: string;
+  context?: ShopContext;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [draft, setDraft] = useState<ProductFilters>(filters);
 
+  // Whatever the route already pins is removed before the query is built, so
+  // `/category/kids` never grows a redundant (and editable) `?category=kids`.
   const push = useCallback((next: ProductFilters) => {
-    startTransition(() => router.push(`${basePath}${buildQuery(next)}`, { scroll: false }));
-  }, [router, basePath]);
+    const query = buildQuery(stripContext(next, context));
+    startTransition(() => router.push(`${basePath}${query}`, { scroll: false }));
+  }, [router, basePath, context]);
 
-  const activeCount = countActiveFilters(filters);
-  const anyActive = hasActiveFilters(filters);
+  /** Filters the customer chose, excluding the route's own constraint. */
+  const editable = useMemo(() => stripContext(filters, context), [filters, context]);
 
-  const openSheet = () => { setDraft(filters); setSheetOpen(true); };
+  /**
+   * Where selecting a top-level category should lead while a category route is
+   * already in force. Choosing a different category navigates to *that*
+   * category, carrying the customer's other filters — rather than layering a
+   * second, contradictory category onto the current path.
+   */
+  const buildCategoryHref = useCallback(
+    (slug: string) => {
+      const rest = { ...editable, categories: undefined, page: 1 };
+      return `/category/${slug}${buildQuery(rest)}`;
+    },
+    [editable]
+  );
+
+  const activeCount = countActiveFilters(editable);
+  const anyActive = hasActiveFilters(editable);
+
+  const openSheet = () => { setDraft(editable); setSheetOpen(true); };
   const applySheet = () => { setSheetOpen(false); push(draft); };
 
-  const clearAll = () =>
-    push({ q: filters.q, sort: filters.sort, page: 1 });
+  /** Clears the customer's filters. The route's own constraint is untouched —
+   *  dropping that is the explicit "view all products" navigation instead. */
+  const clearAll = () => push({ q: filters.q, sort: filters.sort, page: 1 });
 
   /** Human-readable chips for everything currently narrowing the list. */
   const chips = useMemo(() => {
     const out: { key: string; label: string; remove: () => void }[] = [];
     const drop = <K extends keyof ProductFilters>(key: K, value: string | number) => () => {
-      const current = (filters[key] as (string | number)[]) ?? [];
-      push({ ...filters, [key]: current.filter((v) => v !== value), page: 1 });
+      const current = (editable[key] as (string | number)[]) ?? [];
+      push({ ...editable, [key]: current.filter((v) => v !== value), page: 1 });
     };
 
-    filters.categories?.forEach((slug) => {
+    editable.categories?.forEach((slug) => {
       const name = categories.find((c) => c.slug === slug)?.name ?? slug;
       out.push({ key: `cat-${slug}`, label: name, remove: drop("categories", slug) });
     });
-    filters.genders?.forEach((gender) =>
+    editable.genders?.forEach((gender) =>
       out.push({ key: `g-${gender}`, label: GENDER_LABELS[gender as Gender], remove: drop("genders", gender) })
     );
-    filters.sizes?.forEach((size) =>
+    editable.sizes?.forEach((size) =>
       out.push({ key: `s-${size}`, label: `سایز ${toPersianDigits(size)}`, remove: drop("sizes", size) })
     );
-    filters.colors?.forEach((id) => {
+    editable.colors?.forEach((id) => {
       const name = facets.colors.find((c) => c.id === id)?.name ?? id;
       out.push({ key: `c-${id}`, label: `رنگ ${name}`, remove: drop("colors", id) });
     });
-    filters.brands?.forEach((slug) => {
+    editable.brands?.forEach((slug) => {
       const name = brands.find((b) => b.slug === slug)?.name ?? slug;
       out.push({ key: `b-${slug}`, label: name, remove: drop("brands", slug) });
     });
-    if (filters.minPrice != null || filters.maxPrice != null) {
-      const from = filters.minPrice != null ? formatAmount(filters.minPrice) : "۰";
-      const to = filters.maxPrice != null ? formatAmount(filters.maxPrice) : "بی‌نهایت";
+    if (editable.minPrice != null || editable.maxPrice != null) {
+      const from = editable.minPrice != null ? formatAmount(editable.minPrice) : "۰";
+      const to = editable.maxPrice != null ? formatAmount(editable.maxPrice) : "بی‌نهایت";
       out.push({
         key: "price",
         label: `قیمت ${from} تا ${to}`,
-        remove: () => push({ ...filters, minPrice: undefined, maxPrice: undefined, page: 1 }),
+        remove: () => push({ ...editable, minPrice: undefined, maxPrice: undefined, page: 1 }),
       });
     }
-    if (filters.inStockOnly) {
-      out.push({ key: "stock", label: "فقط موجود", remove: () => push({ ...filters, inStockOnly: false, page: 1 }) });
+    if (editable.inStockOnly) {
+      out.push({ key: "stock", label: "فقط موجود", remove: () => push({ ...editable, inStockOnly: false, page: 1 }) });
     }
-    if (filters.onSaleOnly) {
-      out.push({ key: "sale", label: "فقط تخفیف‌دار", remove: () => push({ ...filters, onSaleOnly: false, page: 1 }) });
+    if (editable.onSaleOnly) {
+      out.push({ key: "sale", label: "فقط تخفیف‌دار", remove: () => push({ ...editable, onSaleOnly: false, page: 1 }) });
     }
     return out;
-  }, [filters, categories, brands, facets.colors, push]);
+  }, [editable, categories, brands, facets.colors, push]);
+
+  /**
+   * The route's own constraint, shown as a locked pill.
+   *
+   * Deliberately not a checkbox: it cannot be unticked in place, because the
+   * pathname would then disagree with the list. Leaving it is the explicit
+   * navigation beside it.
+   */
+  const ContextPill = ({ className }: { className?: string }) =>
+    context ? (
+      <div
+        className={cn(
+          "rounded-lg border border-primary-border bg-primary-soft p-3",
+          className
+        )}
+      >
+        <p className="flex items-center gap-1.5 text-sm font-medium text-fg">
+          <Lock className="size-3.5 shrink-0 text-primary-soft-fg" aria-hidden />
+          {context.label}
+        </p>
+        <p className="mt-1 text-xs leading-5 text-fg-muted">
+          این صفحه فقط همین محصولات را نشان می‌دهد. سایر فیلترها آزادند.
+        </p>
+        <Link
+          href={context.escapeHref}
+          className="mt-2 inline-flex min-h-9 items-center gap-1 text-sm font-medium text-primary hover:underline dark:text-[color:var(--primary-soft-fg)]"
+        >
+          {context.escapeLabel}
+          <ArrowLeft className="size-3.5" aria-hidden />
+        </Link>
+      </div>
+    ) : null;
 
   const SortSelect = ({ id }: { id: string }) => (
     <div className="flex items-center gap-2">
@@ -131,12 +193,15 @@ export function ShopView({
                 </button>
               )}
             </div>
+            <ContextPill className="mb-3" />
             <FilterPanel
-              filters={filters}
+              filters={editable}
               facets={facets}
               categories={categories}
               brands={brands}
               onChange={push}
+              context={context}
+              buildCategoryHref={buildCategoryHref}
             />
           </div>
         </aside>
@@ -231,12 +296,15 @@ export function ShopView({
           </div>
         }
       >
+        <ContextPill className="mb-4" />
         <FilterPanel
           filters={draft}
           facets={facets}
           categories={categories}
           brands={brands}
           onChange={setDraft}
+          context={context}
+          buildCategoryHref={buildCategoryHref}
         />
       </BottomSheet>
     </div>

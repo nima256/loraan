@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import { TicketPercent } from "lucide-react";
 import { ShopView } from "@/components/shop/ShopView";
-import { brands, categories } from "@/data/catalog";
-import { getFacets, searchProducts } from "@/lib/api/products";
+import { getFacets, listBrands, listCategories, searchProducts } from "@/server/services/catalog";
+import { listPublicCoupons } from "@/server/services/coupons";
 import { parseFilters, type RawParams } from "@/lib/shop-params";
-import { coupons } from "@/data/commerce";
+import { applyContext, saleContext } from "@/lib/shop-context";
 import { formatAmount, toPersianDigits } from "@/lib/format";
 
 export const metadata: Metadata = {
@@ -14,11 +14,20 @@ export const metadata: Metadata = {
 
 export default async function SalePage({ searchParams }: { searchParams: Promise<RawParams> }) {
   const params = await searchParams;
-  // The sale page is the shop with `onSale` locked on.
-  const filters = { ...parseFilters(params), onSaleOnly: true, sort: parseFilters(params).sort ?? "discount" };
-  const result = await searchProducts(filters);
+  const parsed = parseFilters(params);
+  // `/sale` means onSale — a route-level constraint, not an editable toggle.
+  const filters = applyContext(
+    { ...parsed, sort: params.sort ? parsed.sort : "discount" },
+    saleContext
+  );
 
-  const activeCoupons = coupons.filter((c) => !c.expiresAt || new Date(c.expiresAt) > new Date());
+  const [result, facets, categories, brands, activeCoupons] = await Promise.all([
+    searchProducts(filters),
+    getFacets(),
+    listCategories(),
+    listBrands(),
+    listPublicCoupons(3),
+  ]);
 
   return (
     <>
@@ -39,7 +48,7 @@ export default async function SalePage({ searchParams }: { searchParams: Promise
             </div>
 
             <ul className="flex flex-wrap gap-2">
-              {activeCoupons.slice(0, 3).map((coupon) => (
+              {activeCoupons.map((coupon) => (
                 <li
                   key={coupon.code}
                   className="rounded-lg border border-dashed border-primary-fg/40 bg-white/10 p-3 backdrop-blur-sm"
@@ -50,7 +59,7 @@ export default async function SalePage({ searchParams }: { searchParams: Promise
                   </p>
                   <p className="mt-1 font-bold tracking-wider" dir="ltr">{coupon.code}</p>
                   <p className="mt-1 max-w-48 text-xs leading-5 text-primary-fg/80">{coupon.description}</p>
-                  {coupon.minSubtotal && (
+                  {coupon.minSubtotal != null && (
                     <p className="tnum mt-1 text-[0.6875rem] text-primary-fg/70">
                       حداقل خرید {formatAmount(coupon.minSubtotal)} تومان
                     </p>
@@ -65,12 +74,13 @@ export default async function SalePage({ searchParams }: { searchParams: Promise
       <ShopView
         result={result}
         filters={filters}
-        facets={getFacets()}
+        facets={facets}
         categories={categories}
         brands={brands}
         basePath="/sale"
         heading="محصولات تخفیف‌دار"
         description="فقط کالاهایی که همین حالا تخفیف دارند."
+        context={saleContext}
       />
     </>
   );
